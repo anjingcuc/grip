@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/climb-core", "crates/climb-cli", "crates/climb-app"]
+
+[workspace.dependencies]
+image = "0.25"
+rayon = "1.10"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tract-onnx = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

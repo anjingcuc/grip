@@ -1,0 +1,18 @@
+/target/
+/models/*.onnx
+/models/*.pt
+/sessions/
+**/sessions/
+/output*/
+/tools/e2e/node_modules/
+/tools/e2e/*.png
+/测试/
+# 用户本地照片（不上传）
+/*.png
+/*.jpg
+# 编辑器/系统
+.vs/
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

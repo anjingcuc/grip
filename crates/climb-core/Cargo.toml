@@ -1,0 +1,18 @@
+[package]
+name = "climb-core"
+version = "0.1.0"
+edition = "2021"
+description = "攀岩岩点检测与线路拆分核心库（YOLO 检测 + EdgeSAM 框提示掩码 + Lab 色度聚类）"
+license = "MIT"
+
+[lib]
+name = "climb_core"
+path = "src/lib.rs"
+
+[dependencies]
+image.workspace = true
+rayon.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tract-onnx.workspace = true

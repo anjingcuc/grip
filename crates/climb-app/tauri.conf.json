@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "攀岩线路高亮",
+  "version": "0.1.0",
+  "identifier": "com.climb-highlight.app",
+  "build": {
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "攀岩线路高亮",
+        "width": 1480,
+        "height": 940,
+        "minWidth": 1080,
+        "minHeight": 660,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      },
+      "csp": null
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": false
+  }
+}
