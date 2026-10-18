@@ -1,11 +1,13 @@
 <div align="center">
   <img src="assets/logo.svg" width="96" alt="Climb Route Highlight logo">
 
-  # 攀岩线路高亮 · Climb Route Highlight
+  # GRIP · 攀岩线路高亮
+
+  **GRIP = Group Routes In Photos — 把照片里的攀岩岩点按颜色归组。**
 
   **自动检测攀岩照片中的所有岩点，按颜色拆分线路，选中线路全彩、其余灰度。**
 
-  [![release](https://github.com/anjingcuc/line-highlight/actions/workflows/release.yml/badge.svg)](https://github.com/anjingcuc/line-highlight/actions/workflows/release.yml)
+  [![release](https://github.com/anjingcuc/grip/actions/workflows/release.yml/badge.svg)](https://github.com/anjingcuc/grip/actions/workflows/release.yml)
   [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
   ![应用主界面](assets/screenshot-selected.png)
@@ -23,7 +25,7 @@
 
 ## 安装
 
-到 [Releases](https://github.com/anjingcuc/line-highlight/releases) 下载最新构建：
+到 [Releases](https://github.com/anjingcuc/grip/releases) 下载最新构建：
 
 - `climb-highlight-app-windows-x86_64.zip`：桌面 GUI（解压后运行 `climb-highlight-app.exe`，模型文件已随包附带）
 - `climb-cli-windows-x86_64.zip`：命令行工具（模型文件同样附带）
@@ -88,7 +90,7 @@ climb-cli edit --session <会话目录> --out 成品.png --debug-out 调试.png
 ## 从源码构建
 
 ```bash
-git clone https://github.com/anjingcuc/line-highlight.git
+git clone https://github.com/anjingcuc/grip.git
 cd line-highlight
 # 先放好模型文件（见 models/README.md）
 cargo build --release                          # 全工作区
