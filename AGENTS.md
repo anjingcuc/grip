@@ -1,4 +1,4 @@
-# AGENTS.md — climb-highlight（攀岩线路高亮）
+# AGENTS.md — GRIP（Group Routes In Photos · 攀岩线路高亮）
 
 Rust 工作区：检测攀岩照片中所有岩点 → 按颜色拆分线路 → 选中线路保色、其余灰度。
 
