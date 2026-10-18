@@ -207,24 +207,51 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
 /* ============ 扫描动画 ============ */
 #scan-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.veil { position: absolute; inset: 0; background: rgba(248, 249, 251, 0.38); }
+/* 暗纱呼吸 */
+.veil {
+  position: absolute; inset: 0;
+  background: rgba(248, 249, 251, 0.38);
+  animation: veil-breathe 2.4s ease-in-out infinite;
+}
+@keyframes veil-breathe {
+  0%, 100% { background: rgba(248, 249, 251, 0.30); }
+  50% { background: rgba(248, 249, 251, 0.46); }
+}
+/* 扫描主线：上下往复 + 辉光脉动 */
 .scan-line {
   position: absolute; left: 0; right: 0; height: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 14px rgba(255, 90, 44, 0.5);
-  animation: scan-y 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+  background: linear-gradient(90deg, transparent, var(--accent) 12%, var(--accent) 88%, transparent);
+  animation:
+    scan-y 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate,
+    line-glow 1.2s ease-in-out infinite;
 }
+@keyframes line-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 90, 44, 0.35); }
+  50% { box-shadow: 0 0 18px rgba(255, 90, 44, 0.75); }
+}
+/* 拖尾：主尾 + 回声尾（滞后形成余韵） */
 .scan-trail {
   position: absolute; left: 0; right: 0; height: 56px;
-  background: linear-gradient(to bottom, rgba(255, 90, 44, 0.14), transparent);
+  background: linear-gradient(to bottom, rgba(255, 90, 44, 0.16), transparent);
   animation: scan-trail 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+.scan-trail.echo {
+  height: 90px;
+  background: linear-gradient(to bottom, rgba(255, 90, 44, 0.07), transparent);
+  animation: scan-trail-echo 2.4s cubic-bezier(0.45, 0, 0.55, 1) -0.35s infinite alternate;
 }
 @keyframes scan-y { from { top: 0; } to { top: calc(100% - 2px); } }
 @keyframes scan-trail { from { top: 0; } to { top: calc(100% - 56px); } }
+@keyframes scan-trail-echo { from { top: 0; } to { top: calc(100% - 90px); } }
+/* 四角括号：呼吸脉动 */
 .corner {
   position: absolute; width: 20px; height: 20px;
   border: 2.5px solid var(--accent);
-  opacity: 0.9;
+  animation: corner-pulse 2.4s ease-in-out infinite;
+}
+@keyframes corner-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 .corner.tl { left: 10px; top: 10px; border-right: none; border-bottom: none; border-radius: 6px 0 0 0; }
 .corner.tr { right: 10px; top: 10px; border-left: none; border-bottom: none; border-radius: 0 6px 0 0; }
@@ -239,12 +266,22 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-md);
+  animation: label-float 2.4s ease-in-out infinite;
+}
+@keyframes label-float {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-3px); }
 }
 .scan-title { font-size: 15px; font-weight: 600; color: var(--text); }
-.scan-stage { font-size: 12px; color: var(--accent); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) {
-  .scan-line, .scan-trail { animation: none; top: 50%; }
+/* 省略号滚动：正在分析. .. ... */
+#scan-dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+@keyframes dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
 }
+.scan-stage { font-size: 12px; color: var(--accent); font-weight: 600; }
 
 /* ============ 状态栏与日志 ============ */
 #statusbar {

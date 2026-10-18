@@ -1,6 +1,9 @@
 //! 攀岩线路高亮 — Tauri 后端
 //! 职责：文件枚举 / 原生对话框 / 分析调度（异步+阶段事件）/ 预览渲染 / 编辑操作 / 导出
 
+// 发布版不弹控制台黑框（Windows 子系统切换）
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use climb_core as pipeline;
 use climb_core::session::{self, SessionState};
 use climb_core::{cluster, render, Analysis, Cluster, Hold, HoldKind, Params};

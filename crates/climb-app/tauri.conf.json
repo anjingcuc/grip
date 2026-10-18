@@ -10,10 +10,10 @@
     "windows": [
       {
         "title": "攀岩线路高亮",
-        "width": 1480,
-        "height": 940,
-        "minWidth": 1080,
-        "minHeight": 660,
+        "width": 800,
+        "height": 600,
+        "minWidth": 720,
+        "minHeight": 540,
         "resizable": true
       }
     ],
