@@ -7,9 +7,10 @@
 /tools/e2e/node_modules/
 /tools/e2e/*.png
 /测试/
-# 用户本地照片（不上传）
+# 用户本地照片/视频原件（不上传）
 /*.png
 /*.jpg
+/*.mp4
 # 编辑器/系统
 .vs/
 .idea/
