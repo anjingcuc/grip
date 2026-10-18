@@ -17,7 +17,9 @@
 
 ## 演示
 
-<video src="https://raw.githubusercontent.com/anjingcuc/grip/main/assets/demo.mp4" controls muted playsinline width="100%"></video>
+[![功能演示视频（点击播放）](assets/screenshot-selected.png)](assets/demo.mp4)
+
+> 2 分 27 秒功能演示：打开文件夹 → 自动检测 → 点选线路保色 → 圈选补测 → 导出。
 
 ## 特性
 
