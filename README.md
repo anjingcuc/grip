@@ -1,23 +1,8 @@
-<div align="center">
-  <img src="assets/logo.svg" width="96" alt="Climb Route Highlight logo">
-
-  # GRIP · 攀岩线路高亮
-
-  **GRIP = Group Routes In Photos — 把照片里的攀岩岩点按颜色归组。**
-
-  **自动检测攀岩照片中的所有岩点，按颜色拆分线路，选中线路全彩、其余灰度。**
-
-  [![release](https://github.com/anjingcuc/grip/actions/workflows/release.yml/badge.svg)](https://github.com/anjingcuc/grip/actions/workflows/release.yml)
-  [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-
-  ![应用主界面](assets/screenshot-selected.png)
-</div>
-
 室内攀岩照片里，同一面墙往往挤着多条颜色各异的线路。本工具把照片拆解成「每条线路一组岩点」，点击任意岩点或颜色即可让该线路保持全彩、其余区域灰度化，用于线路分享、动作复盘与定线沟通。全程本地计算，无网络依赖。
 
 ## 演示
 
-[![功能演示视频（点击播放）](assets/screenshot-selected.png)](assets/demo.mp4)
+https://github.com/user-attachments/assets/1bc89105-815c-40c2-9ccc-42ab5d7b1c70
 
 > 2 分 27 秒功能演示：打开文件夹 → 自动检测 → 点选线路保色 → 圈选补测 → 导出。
 
