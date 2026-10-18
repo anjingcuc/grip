@@ -27,8 +27,8 @@
 
 到 [Releases](https://github.com/anjingcuc/grip/releases) 下载最新构建：
 
-- `climb-highlight-app-windows-x86_64.zip`：桌面 GUI（解压后运行 `climb-highlight-app.exe`，模型文件已随包附带）
-- `climb-cli-windows-x86_64.zip`：命令行工具（模型文件同样附带）
+- `GRIP-app-windows-x86_64.zip`：桌面 GUI（解压后运行 `GRIP-app.exe`，模型文件已随包附带）
+- `GRIP-cli-windows-x86_64.zip`：命令行工具（模型文件同样附带）
 
 GUI 依赖 Windows 10/11 自带的 WebView2 运行时（绝大多数系统已内置）。
 

@@ -15,8 +15,8 @@
     </div>
 
     <div class="tb-group">
-      <button id="btn-open" class="btn"><img src="icons/folder-open.svg" alt="">打开文件夹</button>
-      <button id="btn-open-img" class="btn"><img src="icons/image.svg" alt="">打开图片</button>
+      <button id="btn-open" class="btn"><img src="icons/folder-open.svg" alt=""><span class="txt">打开文件夹</span></button>
+      <button id="btn-open-img" class="btn"><img src="icons/image.svg" alt=""><span class="txt">打开图片</span></button>
       <span id="folder-name" class="muted"></span>
     </div>
 
@@ -32,16 +32,16 @@
     <div class="tb-sep"></div>
 
     <div class="tb-group">
-      <button id="btn-undo" class="btn" title="撤销 [Ctrl+Z]"><img src="icons/arrow-counter-clockwise.svg" alt="">撤销</button>
-      <button id="btn-fit" class="btn" title="适应窗口 [F]"><img src="icons/frame-corners.svg" alt="">适应</button>
+      <button id="btn-undo" class="btn" title="撤销 [Ctrl+Z]"><img src="icons/arrow-counter-clockwise.svg" alt=""><span class="txt">撤销</span></button>
+      <button id="btn-fit" class="btn" title="适应窗口 [F]"><img src="icons/frame-corners.svg" alt=""><span class="txt">适应</span></button>
     </div>
 
     <div class="spacer"></div>
 
     <div class="tb-group">
       <span id="model-status" class="muted small"></span>
-      <button id="btn-export" class="btn btn-accent"><img src="icons/download-simple.svg" alt="">导出本张</button>
-      <button id="btn-batch" class="btn"><img src="icons/stack.svg" alt="">批量导出</button>
+      <button id="btn-export" class="btn btn-accent"><img src="icons/download-simple.svg" alt=""><span class="txt">导出本张</span></button>
+      <button id="btn-batch" class="btn"><img src="icons/stack.svg" alt=""><span class="txt">批量导出</span></button>
     </div>
   </header>
 
@@ -88,8 +88,11 @@
       <section class="side-sec" id="info-sec">
         <div class="side-head"><span class="side-title">检测信息</span></div>
         <div id="info-body" class="mono small muted">未分析</div>
-        <button id="btn-reset" class="btn btn-ghost">重置本张修改</button>
       </section>
+
+      <div id="sidebar-footer">
+        <button id="btn-reset" class="btn btn-warn"><img src="icons/arrow-counter-clockwise.svg" alt="">重新检测</button>
+      </div>
     </aside>
 
     <main id="stage">

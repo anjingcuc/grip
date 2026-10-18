@@ -48,8 +48,8 @@ jobs:
         run: |
           New-Item -ItemType Directory dist | Out-Null
           $models = @("models/chalkgpt_holds.onnx", "models/edge_sam_3x_encoder.onnx", "models/edge_sam_3x_decoder.onnx", "models/README.md")
-          Compress-Archive -Path (@("target/release/climb-cli.exe") + $models) -DestinationPath dist/climb-cli-windows-x86_64.zip -Force
-          Compress-Archive -Path (@("target/release/climb-highlight-app.exe") + $models) -DestinationPath dist/climb-highlight-app-windows-x86_64.zip -Force
+          Compress-Archive -Path (@("target/release/GRIP-cli.exe") + $models) -DestinationPath dist/GRIP-cli-windows-x86_64.zip -Force
+          Compress-Archive -Path (@("target/release/GRIP-app.exe") + $models) -DestinationPath dist/GRIP-app-windows-x86_64.zip -Force
 
       - name: 发布（tag 推正式版 / main 推 nightly 预发布）
         uses: softprops/action-gh-release@v2

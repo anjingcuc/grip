@@ -6,7 +6,7 @@ description = "攀岩线路高亮 CLI：批处理 + AI agent 会话模式"
 license = "MIT"
 
 [[bin]]
-name = "climb-cli"
+name = "GRIP-cli"
 path = "src/main.rs"
 
 [dependencies]

@@ -194,7 +194,7 @@ function renderSidebars() {
   $("#img-count").textContent = S.images.length ? `${S.images.length} 张` : "";
   for (const p of S.images) {
     const el = document.createElement("div");
-    el.className = "list-item" + (p === S.cur ? " active" : "");
+    el.className = "list-item file-item" + (p === S.cur ? " active" : "");
     el.textContent = p.split(/[\\/]/).pop();
     el.title = p;
     el.onclick = () => selectImage(p);
