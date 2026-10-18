@@ -190,7 +190,20 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   user-select: none;
 }
 #viewer-inner { position: absolute; transform-origin: 0 0; }
+/* 无图时隐藏 img（否则浏览器渲染破损图标），显示空状态页 */
+#view-img:not([src]) { display: none; }
 #view-img { position: absolute; pointer-events: none; }
+#empty-state {
+  display: none;
+  position: absolute; inset: 0;
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  pointer-events: none;
+}
+#viewer.empty #empty-state { display: flex; }
+.empty-logo { width: 64px; height: 64px; opacity: 0.9; }
+.empty-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.empty-hint { font-size: 12.5px; color: var(--text-2); }
+.empty-keys { font-size: 11px; color: var(--muted); margin-top: 4px; }
 #overlay { position: absolute; overflow: visible; }
 
 /* 检测框 */

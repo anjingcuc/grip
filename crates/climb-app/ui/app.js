@@ -127,12 +127,18 @@ function drawOverlay() {
 function rgbStr(rgb) { return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; }
 
 // ============ 图像加载 ============
+function setEmpty(empty) {
+  viewer.classList.toggle("empty", empty);
+  if (empty) viewImg.removeAttribute("src");
+}
 function showOriginal(path) {
+  setEmpty(false);
   viewImg.src = convertFileSrc(path);
   drawOverlay();
   layout();
 }
 function showResult(dataUrl) {
+  setEmpty(false);
   viewImg.src = dataUrl;
 }
 
@@ -573,13 +579,25 @@ async function openFolder(f) {
   renderSidebars();
   log(`打开文件夹: ${f}（${S.images.length} 张）`);
   if (S.images.length) selectImage(S.images[0]);
+  else setEmpty(true);
 }
+
+// 拖入图片：Tauri 拖拽事件
+TAURI.webview.getCurrentWebview().onDragDropEvent(async (ev) => {
+  if (ev.payload.type !== "drop") return;
+  const img = ev.payload.paths.find((p) => /\.(png|jpe?g|webp|bmp)$/i.test(p));
+  if (!img) return;
+  const parent = img.replace(/[\\/][^\\/]*$/, "");
+  if (parent !== S.folder) await openFolder(parent);
+  selectImage(img);
+});
 
 // 图片加载完成后按自然纵横比重排（修复载入期压扁）
 viewImg.addEventListener("load", layout);
 
 async function boot() {
   setTool("select");
+  setEmpty(true);
   $("#overlay-toggle").classList.add("active");
   document.querySelector("#view-toggle .seg-btn[data-view='result']").classList.add("active");
   // 参数初始化
