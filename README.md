@@ -15,6 +15,10 @@
 
 室内攀岩照片里，同一面墙往往挤着多条颜色各异的线路。本工具把照片拆解成「每条线路一组岩点」，点击任意岩点或颜色即可让该线路保持全彩、其余区域灰度化，用于线路分享、动作复盘与定线沟通。全程本地计算，无网络依赖。
 
+## 演示
+
+<video src="https://raw.githubusercontent.com/anjingcuc/grip/main/assets/demo.mp4" controls muted playsinline width="100%"></video>
+
 ## 特性
 
 - **检测不受染色干扰**：镁粉/黑橡胶把岩点染成花色时，同一岩点的彩色部分与污染部分仍连成一个完整轮廓（YOLO11s 语义检测出框 → EdgeSAM 框提示分割 ∩ 局部墙面差分）。
