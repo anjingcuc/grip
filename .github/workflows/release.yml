@@ -55,6 +55,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
-          name: ${{ github.ref_type == 'tag' && format('climb-highlight {0}', github.ref_name) || 'nightly 构建' }}
+          name: ${{ github.ref_type == 'tag' && format('GRIP {0}', github.ref_name) || 'nightly 构建' }}
           prerelease: ${{ github.ref_type != 'tag' }}
           files: dist/*.zip
