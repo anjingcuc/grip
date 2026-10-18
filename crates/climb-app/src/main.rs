@@ -683,7 +683,7 @@ fn set_params(state: State<'_, AppState>, patch: serde_json::Value) -> Result<()
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -706,6 +706,14 @@ fn main() {
             get_params,
             set_params,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running climb-highlight");
+        .build(tauri::generate_context!())
+        .expect("构建 GRIP 应用失败");
+    // 关窗即退出：事件循环请求退出时立即结束整个进程，
+    // 连带终止后台分析线程与 WebView2 子进程，杜绝残留。
+    // 安全性：所有用户标注在每次编辑时已即时落盘，强退不丢数据。
+    app.run(|_app, event| {
+        if let tauri::RunEvent::ExitRequested { code, .. } = event {
+            std::process::exit(code.unwrap_or(0));
+        }
+    });
 }
