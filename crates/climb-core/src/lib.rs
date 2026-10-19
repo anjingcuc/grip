@@ -589,12 +589,14 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
                         let wall = local_wall_ref(lab, &sat, w, x0, y0, cw, chh);
                         let t_lo = wall.map(|(_, sg)| (p.wall_k * sg * 0.55).clamp(4.0, 18.0));
                         let mut sam_px: Vec<u32> = Vec::new();
+                        let mut sam_bin = vec![0u8; cw * chh];
                         let mut mask_bin = vec![0u8; cw * chh];
                         for y in y0..y1 {
                             for x in x0..x1 {
                                 if e.sample_logit(&grid, x as f32 + 0.5, y as f32 + 0.5) > 0.0 {
                                     let gi = (y * w + x) as u32;
                                     sam_px.push(gi);
+                                    sam_bin[(y - y0) * cw + (x - x0)] = 255;
                                     let keep = if let (Some((med, _)), Some(t)) = (wall, t_lo) {
                                         let q = lab[gi as usize];
                                         ((q[0] - med[0]).powi(2) + (q[1] - med[1]).powi(2) + (q[2] - med[2]).powi(2)).sqrt() > t
@@ -607,7 +609,7 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
                                 }
                             }
                         }
-                        // 连通域拆分：条带掩码按墙缝断开成逐点 blob
+                        // 连通域拆分：条带掩码按墙缝断开成逐点 blob（窗口局部索引）
                         let (lbl2, cnt2) = conn::label_components(&mask_bin, cw, chh);
                         let mut comps: Vec<Vec<u32>> = vec![Vec::new(); cnt2];
                         for dy in 0..chh {
@@ -615,16 +617,30 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
                             for dx in 0..cw {
                                 let l = lbl2[base + dx];
                                 if l > 0 {
-                                    comps[(l - 1) as usize].push((((y0 + dy) * w) + (x0 + dx)) as u32);
+                                    comps[(l - 1) as usize].push((base + dx) as u32);
                                 }
                             }
                         }
                         comps.sort_by_key(|c| std::cmp::Reverse(c.len()));
                         comps.truncate(4);
-                        for cpx in comps {
-                            if cpx.len() < 24 {
+                        comps.retain(|c| c.len() >= 24);
+                        // 测地重构（issue #8）：证据 ∩ SAM 确认的子块为种子，在 SAM 掩码内
+                        // 做最近种子扩张——被证据裁掉的连通延伸（纯色尖顶/灰边）收回；
+                        // 条带在多种子间剖分不跨域合并；面积上限防掩码过冲被无界吞并
+                        let seeds: Vec<&[u32]> = comps.iter().map(|c| c.as_slice()).collect();
+                        let caps: Vec<usize> = comps.iter().map(|c| (c.len() * 4).max(c.len() + 2000)).collect();
+                        let grown = conn::voronoi_reconstruct(&sam_bin, cw, chh, &seeds, &caps);
+                        for gpx in grown {
+                            if gpx.len() < 24 {
                                 continue;
                             }
+                            let cpx: Vec<u32> = gpx
+                                .iter()
+                                .map(|&i| {
+                                    let (lx, ly) = (i as usize % cw, i as usize / cw);
+                                    ((y0 + ly) * w + (x0 + lx)) as u32
+                                })
+                                .collect();
                             if let Some(hf) = hold_from_pixels(&img, w, cpx, p) {
                                 found.push(hf);
                                 sam_ok = true;

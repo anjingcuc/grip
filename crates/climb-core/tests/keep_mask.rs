@@ -112,3 +112,49 @@ fn dilated_ring_still_blocks_foreign_color() {
     // 环带内低饱和墙像素（56,40）：放行（抗 halo 的既有行为）
     assert_eq!(at(&mask, 56, 40), 255, "环带内低饱和墙像素应放行");
 }
+
+/// 多岩点重叠区仍做颜色约束：大体积掩码吸入的异色 screw-on 不随体积保色；
+/// 同色重叠（体积 + 本线 screw-on）照常保色
+#[test]
+fn overlap_region_still_color_checked() {
+    // 灰墙
+    let mut img = RgbaImage::new(W, H);
+    for px in img.pixels_mut() {
+        *px = Rgba([150, 150, 150, 255]);
+    }
+    // 红色大体积 @ (40,40) r=15（完整圆盘含 screw-on 所在区）
+    let vol_px = disc(&mut img, 40, 40, 15, |_, _| [200, 45, 40]);
+    // 黄色 screw-on @ (50,40) r=4（覆盖在体积上，像素与体积重叠）
+    let yel_px = disc(&mut img, 50, 40, 4, |_, _| [230, 200, 30]);
+    // 红色 screw-on @ (33,40) r=3（同色重叠对照）
+    let red_px = disc(&mut img, 33, 40, 3, |_, _| [205, 50, 45]);
+    let (hue, sat, val) = hsv::compute_hsv(img.as_raw());
+    let lab = |c: [u8; 3]| hsv::rgb_to_lab(c[0], c[1], c[2]);
+    let lr = lab([200, 45, 40]);
+    let ly = lab([230, 200, 30]);
+    let mk_cl = |ab: [f32; 2], rgb: [u8; 3], holds: Vec<usize>| Cluster { kind: HoldKind::Colored, hue: 0.0, ab, rgb, holds, area: 100 };
+    let a = Analysis {
+        aw: W,
+        ah: H,
+        fw: W,
+        fh: H,
+        labels: Vec::new(),
+        holds: vec![hold(0, &vol_px, 0, 40, 40, 15), hold(1, &yel_px, 1, 50, 40, 4), hold(2, &red_px, 0, 33, 40, 3)],
+        clusters: vec![mk_cl([lr[1], lr[2]], [200, 45, 40], vec![0, 2]), mk_cl([ly[1], ly[2]], [230, 200, 30], vec![1])],
+        img,
+        hue,
+        sat,
+        val,
+        wall_v: 0.6,
+        wall_s: 0.0,
+        timing_ms: 0.0,
+    };
+    let none: std::collections::HashSet<usize> = Default::default();
+    let mask = render::keep_mask(&a, Some(0), &none, &none, 0);
+    // 体积独占区（38,30）：无条件保色
+    assert_eq!(at(&mask, 38, 30), 255, "体积独占像素应保色");
+    // 黄色 screw-on 重叠区（50,40）：claim=2 且色度远离红簇 → 不保色（防串色）
+    assert_eq!(at(&mask, 50, 40), 0, "重叠区异色 screw-on 不应随体积保色");
+    // 红色 screw-on 重叠区（33,40）：claim=2 但色度符合 → 保色
+    assert_eq!(at(&mask, 33, 40), 255, "重叠区同色 screw-on 应保色");
+}

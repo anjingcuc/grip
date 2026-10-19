@@ -213,3 +213,60 @@ pub fn gather_stats(labels: &[u32], hue: &[f32], sat: &[f32], val: &[f32], w: us
     }
     out
 }
+
+/// 多种子测地重构（8 连通 BFS）：在二值掩码内，把每个掩码像素分配给测地距离
+/// 最近的种子块（并列先到先得）。用于把"证据 ∩ SAM"确认的子块扩展回 SAM 掩码的
+/// 连通延伸部分（被证据裁掉的纯色尖顶/边缘——issue #8），横跨多块的条带在多种子间
+/// 从中剖分、不跨域合并。`caps[i]` 为第 i 个种子块最终面积上限（防掩码过冲被无界吞并）。
+/// 输入输出均为窗口局部坐标索引；返回第 i 个种子块重构后的像素集合（含种子本身）。
+pub fn voronoi_reconstruct(sam_mask: &[u8], w: usize, h: usize, seeds: &[&[u32]], caps: &[usize]) -> Vec<Vec<u32>> {
+    assert_eq!(sam_mask.len(), w * h);
+    assert_eq!(seeds.len(), caps.len());
+    let mut owner = vec![0u32; w * h];
+    let mut q: std::collections::VecDeque<(u32, u32)> = std::collections::VecDeque::new();
+    let mut counts: Vec<usize> = Vec::with_capacity(seeds.len());
+    for (li, seed) in seeds.iter().enumerate() {
+        let l = li as u32 + 1;
+        let mut c = 0usize;
+        for &i in seed.iter() {
+            let i = i as usize;
+            if i < w * h && sam_mask[i] > 0 && owner[i] == 0 {
+                owner[i] = l;
+                q.push_back((i as u32, l));
+                c += 1;
+            }
+        }
+        counts.push(c);
+    }
+    while let Some((i, l)) = q.pop_front() {
+        let li = (l - 1) as usize;
+        if counts[li] >= caps[li] {
+            continue; // 该标签达上限，停止向外扩张
+        }
+        let (x, y) = (i as usize % w, i as usize / w);
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                    continue;
+                }
+                let ni = ny as usize * w + nx as usize;
+                if sam_mask[ni] > 0 && owner[ni] == 0 {
+                    owner[ni] = l;
+                    counts[li] += 1;
+                    q.push_back((ni as u32, l));
+                }
+            }
+        }
+    }
+    let mut out: Vec<Vec<u32>> = vec![Vec::new(); seeds.len()];
+    for (i, &l) in owner.iter().enumerate() {
+        if l > 0 {
+            out[(l - 1) as usize].push(i as u32);
+        }
+    }
+    out
+}

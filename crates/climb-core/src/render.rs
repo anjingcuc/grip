@@ -7,8 +7,10 @@ use std::collections::HashSet;
 
 /// 生成"保留颜色"掩码（分析分辨率）：选中颜色组、未被排除/抹除的岩点像素。
 /// 岩点轮廓内部不做颜色校验、统一保色（暗部/污渍/侧光不再被抠成灰黑斑——issue #5）；
-/// 逐像素颜色约束（Lab 色度平面，与簇色度中心 (a*,b*) 距离 ≤20，低饱和放行）只作用于
-/// 掩码外扩边缘带——防相邻异色岩点串色的既有能力保留在外扩环内。
+/// 但两类"争议像素"仍受颜色约束（Lab 色度 ≤20，低饱和放行）：
+///   1) 掩码外扩边缘带——防相邻异色岩点串色；
+///   2) 被多个岩点同时覆盖的重叠区（如大体积上附着的异色 screw-on）——独占像素无条件保色，
+///      重叠像素须过颜色校验，否则体积掩码里的异色小点会随体积一起保色（#7 扩框后的串色回归）。
 pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, erased: &HashSet<usize>, dilate_r: usize) -> Vec<u8> {
     let n = (a.aw * a.ah) as usize;
     let mut core = vec![0u8; n];
@@ -17,31 +19,6 @@ pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, er
         return core;
     }
     let cl = &a.clusters[sel];
-    let visible = |h: &&Hold| !excluded.contains(&h.id) && !erased.contains(&h.id);
-    // 引用 labels 的自动岩点（回退路径）
-    let include_labels: HashSet<u32> = a
-        .holds
-        .iter()
-        .filter(|h| h.cluster == sel && visible(h) && h.label > 0)
-        .map(|h| h.label)
-        .collect();
-    for (i, &l) in a.labels.iter().enumerate() {
-        if l > 0 && include_labels.contains(&l) {
-            core[i] = 255;
-        }
-    }
-    // 套索/补测岩点（自包含像素）
-    for h in &a.holds {
-        if h.cluster == sel && visible(&h) && h.label == 0 {
-            for &i in &h.own_pixels {
-                core[i as usize] = 255;
-            }
-        }
-    }
-    if dilate_r == 0 {
-        return core;
-    }
-    // 外扩边缘带：逐像素颜色约束（仅环带，不碰轮廓内部）
     let raw = a.img.as_raw();
     let ok_px = |i: usize| -> bool {
         let (h, s, v) = (a.hue[i], a.sat[i], a.val[i]);
@@ -59,6 +36,46 @@ pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, er
             HoldKind::Gray => true,
         }
     };
+    let visible = |h: &&Hold| !excluded.contains(&h.id) && !erased.contains(&h.id);
+    // 引用 labels 的自动岩点（回退路径；labels 每像素唯一，天然无重叠）
+    let include_labels: HashSet<u32> = a
+        .holds
+        .iter()
+        .filter(|h| h.cluster == sel && visible(h) && h.label > 0)
+        .map(|h| h.label)
+        .collect();
+    for (i, &l) in a.labels.iter().enumerate() {
+        if l > 0 && include_labels.contains(&l) {
+            core[i] = 255;
+        }
+    }
+    // 自包含像素路径：先统计每个像素被多少个可见岩点覆盖（重叠区判据）
+    let mut claim = vec![0u8; n];
+    for h in &a.holds {
+        if h.label == 0 && visible(&h) {
+            for &i in &h.own_pixels {
+                let c = &mut claim[i as usize];
+                if *c < 255 {
+                    *c += 1;
+                }
+            }
+        }
+    }
+    // 套索/补测岩点（自包含像素）：独占像素无条件保色，重叠像素过颜色校验
+    for h in &a.holds {
+        if h.cluster == sel && visible(&h) && h.label == 0 {
+            for &i in &h.own_pixels {
+                let i = i as usize;
+                if claim[i] <= 1 || ok_px(i) {
+                    core[i] = 255;
+                }
+            }
+        }
+    }
+    if dilate_r == 0 {
+        return core;
+    }
+    // 外扩边缘带：逐像素颜色约束（仅环带，不碰轮廓内部）
     let dil = super::morph::dilate(&core, a.aw as usize, a.ah as usize, dilate_r);
     let mut mask = core;
     for i in 0..n {
