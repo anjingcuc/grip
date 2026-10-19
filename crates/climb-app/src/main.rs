@@ -21,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 struct Snap {
     sel: Option<usize>,
     excluded: HashSet<usize>,
+    erased: HashSet<usize>,
     holds: Vec<Hold>,
     clusters: Vec<Cluster>,
 }
@@ -30,6 +31,7 @@ struct ImgEntry {
     a: Analysis,
     sel: Option<usize>,
     excluded: HashSet<usize>,
+    erased: HashSet<usize>,
     undo: Vec<Snap>,
 }
 
@@ -51,6 +53,7 @@ fn push_undo(e: &mut ImgEntry) {
     e.undo.push(Snap {
         sel: e.sel,
         excluded: e.excluded.clone(),
+        erased: e.erased.clone(),
         holds: e.a.holds.clone(),
         clusters: e.a.clusters.clone(),
     });
@@ -79,6 +82,7 @@ struct SummaryHold {
     area: u32,
     lasso: bool,
     excluded: bool,
+    erased: bool,
 }
 
 #[derive(Serialize)]
@@ -131,6 +135,7 @@ fn auto_save(e: &ImgEntry, pb: &Path, params: &Params) {
         params: params.clone(),
         selected: e.sel,
         excluded: e.excluded.iter().copied().collect(),
+        erased: e.erased.iter().copied().collect(),
         holds: e.a.holds.clone(),
         clusters: e.a.clusters.clone(),
     };
@@ -186,6 +191,7 @@ fn build_summary(path: &Path, e: &ImgEntry) -> Summary {
                 area: h.area,
                 lasso: h.lasso,
                 excluded: e.excluded.contains(&h.id),
+                erased: e.erased.contains(&h.id),
             })
             .collect(),
         clusters: a
@@ -206,9 +212,9 @@ fn build_summary(path: &Path, e: &ImgEntry) -> Summary {
 }
 
 fn render_preview_url(e: &ImgEntry, params: &Params) -> Result<String, String> {
-    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, params.mask_dilate);
+    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
-    let fill = render::fill_layer(&e.a, &e.excluded, params.bg_fill);
+    let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
     let img = render::composite_preview(&e.a, &mask, params.bg_sat, fill.as_ref());
     let mut buf = std::io::Cursor::new(Vec::new());
     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 84);
@@ -370,6 +376,7 @@ async fn analyze(app: AppHandle, state: State<'_, AppState>, path: String) -> Re
             params: params.clone(),
             selected: None,
             excluded: Vec::new(),
+            erased: Vec::new(),
             holds: a.holds.clone(),
             clusters: a.clusters.clone(),
         };
@@ -379,11 +386,15 @@ async fn analyze(app: AppHandle, state: State<'_, AppState>, path: String) -> Re
     .await
     .map_err(|e| e.to_string())??;
 
+    // 会话携带的参数（墙面净化强度等）恢复到全局：重开图片后滑杆位置与画面效果保持
+    *state.params.lock().map_err(|_| "lock")? = st.params.clone();
+
     let entry = ImgEntry {
         full: Arc::new(full),
         a,
         sel: st.selected,
         excluded: st.excluded.into_iter().collect(),
+        erased: st.erased.into_iter().collect(),
         undo: Vec::new(),
     };
     let mut imgs = state.images.lock().map_err(|_| "lock")?;
@@ -423,7 +434,7 @@ fn set_selected(state: State<'_, AppState>, path: String, cluster_id: Option<i64
     Ok(EditResult { preview, summary })
 }
 
-/// 排除/恢复某个岩点
+/// 排除/恢复某个岩点：是岩点但颜色误判/不入线路——保留灰度可见，不被净化抹平
 #[tauri::command]
 fn toggle_exclude(state: State<'_, AppState>, path: String, hold_id: usize) -> Result<EditResult, String> {
     let pb = PathBuf::from(&path);
@@ -438,6 +449,30 @@ fn toggle_exclude(state: State<'_, AppState>, path: String, hold_id: usize) -> R
         e.excluded.remove(&hold_id);
     } else {
         e.excluded.insert(hold_id);
+        e.erased.remove(&hold_id); // 两态互斥：排除 = 承认是岩点
+    }
+    auto_save(e, &pb, &params);
+    let preview = render_preview_url(e, &params)?;
+    let summary = build_summary(&pb, e);
+    Ok(EditResult { preview, summary })
+}
+
+/// 抹除/恢复某个岩点：判定误检（污渍/螺丝孔，不是岩点）——始终满强度净化抹平
+#[tauri::command]
+fn toggle_erase(state: State<'_, AppState>, path: String, hold_id: usize) -> Result<EditResult, String> {
+    let pb = PathBuf::from(&path);
+    let params = state.params.lock().map_err(|_| "lock")?.clone();
+    let mut imgs = state.images.lock().map_err(|_| "lock")?;
+    let e = imgs.get_mut(&pb).ok_or("未分析")?;
+    if !e.a.holds.iter().any(|h| h.id == hold_id) {
+        return Err(format!("岩点 {hold_id} 不存在"));
+    }
+    push_undo(e);
+    if e.erased.contains(&hold_id) {
+        e.erased.remove(&hold_id);
+    } else {
+        e.erased.insert(hold_id);
+        e.excluded.remove(&hold_id); // 两态互斥：抹除 = 这不是岩点
     }
     auto_save(e, &pb, &params);
     let preview = render_preview_url(e, &params)?;
@@ -456,6 +491,7 @@ fn undo(state: State<'_, AppState>, path: String) -> Result<Option<EditResult>, 
         Some(s) => {
             e.sel = s.sel;
             e.excluded = s.excluded;
+            e.erased = s.erased;
             e.a.holds = s.holds;
             e.a.clusters = s.clusters;
             auto_save(e, &pb, &params);
@@ -560,6 +596,7 @@ fn lasso_add(state: State<'_, AppState>, path: String, points: Vec<(f32, f32)>, 
                 hd.cluster != fc
                     && hd.cluster != usize::MAX
                     && !e.excluded.contains(&hd.id)
+                    && !e.erased.contains(&hd.id)
                     && {
                         let (x, y) = (hd.centroid[0] as usize, hd.centroid[1] as usize);
                         x < w && y < h && region[y * w + x] != 0
@@ -600,9 +637,9 @@ async fn export_current(app: AppHandle, state: State<'_, AppState>, path: String
     };
     let imgs = state.images.lock().map_err(|_| "lock")?;
     let e = imgs.get(&pb).ok_or("未分析")?;
-    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, params.mask_dilate);
+    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
-    let fill = render::fill_layer(&e.a, &e.excluded, params.bg_fill);
+    let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
     let img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat, fill.as_ref());
     img.save(&target).map_err(|e2| e2.to_string())?;
     Ok(Some(target))
@@ -632,7 +669,7 @@ async fn batch_export(app: AppHandle, state: State<'_, AppState>, folder: String
                         .filter(|(_, c)| c.kind == HoldKind::Colored)
                         .max_by_key(|(_, c)| c.area)
                         .map(|(ci, _)| ci);
-                    let mask = render::keep_mask(&a, sel, &Default::default(), params.mask_dilate);
+                    let mask = render::keep_mask(&a, sel, &Default::default(), &Default::default(), params.mask_dilate);
                     let mask = render::feather(&a, &mask, params.feather);
                     let fill = render::fill_layer(&a, &Default::default(), params.bg_fill);
                     let img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat, fill.as_ref());
@@ -668,19 +705,33 @@ fn get_params(state: State<'_, AppState>) -> Result<Params, String> {
 }
 
 #[tauri::command]
-fn set_params(state: State<'_, AppState>, patch: serde_json::Value) -> Result<(), String> {
-    let mut p = state.params.lock().map_err(|_| "lock")?;
-    if let Some(v) = patch.get("wall_k").and_then(|v| v.as_f64()) {
-        p.wall_k = v as f32;
-    }
-    if let Some(v) = patch.get("min_area_frac").and_then(|v| v.as_f64()) {
-        p.min_area_frac = v;
-    }
-    if let Some(v) = patch.get("feather").and_then(|v| v.as_f64()) {
-        p.feather = v as f32;
-    }
-    if let Some(v) = patch.get("bg_sat").and_then(|v| v.as_f64()) {
-        p.bg_sat = v as f32;
+fn set_params(state: State<'_, AppState>, patch: serde_json::Value, path: Option<String>) -> Result<(), String> {
+    let pc = {
+        let mut p = state.params.lock().map_err(|_| "lock")?;
+        if let Some(v) = patch.get("wall_k").and_then(|v| v.as_f64()) {
+            p.wall_k = v as f32;
+        }
+        if let Some(v) = patch.get("min_area_frac").and_then(|v| v.as_f64()) {
+            p.min_area_frac = v;
+        }
+        if let Some(v) = patch.get("feather").and_then(|v| v.as_f64()) {
+            p.feather = v as f32;
+        }
+        if let Some(v) = patch.get("bg_sat").and_then(|v| v.as_f64()) {
+            p.bg_sat = v as f32;
+        }
+        if let Some(v) = patch.get("bg_fill").and_then(|v| v.as_f64()) {
+            p.bg_fill = v as f32;
+        }
+        p.clone()
+    };
+    // 参数变化也随会话落盘（净化强度重开图片后仍在）
+    if let Some(path) = path {
+        let pb = PathBuf::from(&path);
+        let mut imgs = state.images.lock().map_err(|_| "lock")?;
+        if let Some(e) = imgs.get_mut(&pb) {
+            auto_save(e, &pb, &pc);
+        }
     }
     Ok(())
 }
@@ -700,6 +751,7 @@ fn main() {
             reanalyze,
             set_selected,
             toggle_exclude,
+            toggle_erase,
             undo,
             assign_to_cluster,
             lasso_add,

@@ -60,14 +60,14 @@ session.rs   标注持久化：<图片目录>/sessions/<文件名>/state.json + 
 ### 不变量（改代码前先知道）
 
 - **掩码/区域数组的坐标系契约**：`wall_dist_holds_in_crop` 的 `region` 参数按**裁剪窗口局部坐标**索引；`detect_in_region` 的 `region` 参数是**全图掩码**——两者之间必须先裁出子掩码（曾因直接透传导致套索补测永远返回空，回归测试 `lasso_detect.rs`）。
-- **标注持久化**：GUI 每次编辑（选线/排除/圈选/归组/撤销）后自动落盘到 `session.rs` 会话；再次打开图片时 `analyze` 的加载顺序：内存缓存 > 磁盘会话 > 全新分析。`reset_image` 删除磁盘会话。
+- **标注持久化**：GUI 每次编辑（选线/排除/抹除/圈选/归组/撤销）后自动落盘到 `session.rs` 会话；再次打开图片时 `analyze` 的加载顺序：内存缓存 > 磁盘会话 > 全新分析。`reset_image` 删除磁盘会话。
 - **圈选/点击的归组语义**（用户明确指定）：已选线路时，套索圈住或点击的岩点**直接并入所选线路，不做颜色校验**（`lasso_add(force_cluster=)` / `assign_to_cluster`）；未选线路时套索按颜色归组、点击等同选线。别加回颜色校验。
 - Tauri 编辑命令统一返回 `EditResult { preview: data_url, summary }`；`lasso_add` 返回 `LassoResult { added, preview, summary }`。前端持有 summary 后框线渲染全部本地进行。
 - `Hold.id == holds 数组下标`。undo 快照靠整表 clone，套索补测 push 前必须先赋 `id = holds.len()`。
 - 岩点像素双表示：`label > 0` 引用 `Analysis.labels`（仅无 YOLO 回退路径）；`label == 0` 用 `own_pixels`（主路）。`keep_mask` 两条路径都要处理。**会话保存前必须 `materialize_labels`**。
 - `Analysis.hue/sat/val`（分析分辨率 HSV）是渲染颜色约束的数据源，删字段会破坏防串色。
 - SAM 掩码必须与"非墙证据"求交后再连通域拆分——直接用原始 SAM 掩码会产生横跨多点的条带合并（已验证的失败模式）。
-- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）。**墙面净化**：`bg_fill`（0=关闭）；填充取样 = 块内低饱和（sat<0.20，同 `build_wall_field` 口径）像素 P90 明度 + 亮部中位数色，稀疏块回退 3×3 邻块→全局；岩点并集外扩 `FILL_DILATE` 3px + 羽化 `FILL_FEATHER` 2px（`render.rs`）；被排除的岩点不并入并集（误检=墙面，填掉）。
+- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）。**墙面净化**：`bg_fill`（0=关闭）；填充取样 = 块内低饱和（sat<0.20，同 `build_wall_field` 口径）像素 P90 明度 + 亮部中位数色，稀疏块回退 3×3 邻块→全局；岩点并集外扩 `FILL_DILATE` 3px + 羽化 `FILL_FEATHER` 2px（`render.rs`）。**抹除≠排除（ADR 0002）**：被抹除（erased，误检=非岩点）的点不并入并集，且**始终满强度抹平**（`bg_fill=0` 也抹）；被排除（excluded，颜色误判）的点仍并入并集受保护，只灰度化不抹平。
 - **颜色命名/展示色相用 Lab 色度角** `atan2(b*,a*)`（锚点：红26/橙58/黄82/绿150/青200/蓝280/紫315/品红355），不是 HSV 色相——暗光下 HSV 色相漂移会把橙读成红（`color_name_ab`）。CLI `--hue` 用同一角。簇色卡 = `display_rgb(ab)`（低色度提亮到色度 28，仅显示用途）。**同名颜色组用 `disambiguated_names` 追加 ①②③**。
 - tract 模型可跨线程共享（rayon par_iter 共用 decoder 已验证）。
 
@@ -92,3 +92,17 @@ YOLO ~150ms + SAM encode ~1.5s + 并行解码 ~3-6s + Lab/聚类 ~1s ≈ **6-10 
 - tract 0.21：输入 `Tensor::from_shape(&[..], vec.as_slice())`；执行 `model.run(tvec!(tensor.into()))`（TValue）；模型类型 `TypedRunnableModel<TypedModel>`；输入 fact 用 `InferenceFact::dt_shape`，类别数在运行时从输出 shape 推（加载期 shape 是符号值）。
 - image 0.25：`copy_from` 需要 `use image::GenericImage`；`ImageBuffer` 没有 `as_raw_mut`（克隆 buf 处理后 `from_raw` 重建）。
 - Tauri 2：assetProtocol 需要 `tauri` 的 `protocol-asset` feature；`generate_context!` 编译期校验 `frontendDist` 路径存在。
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on `anjingcuc/grip` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.

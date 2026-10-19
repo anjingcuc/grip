@@ -63,7 +63,7 @@ enum Cmd {
         #[arg(long, default_value_t = 1600)]
         max_dim: u32,
     },
-    /// 编辑会话：选线 / 排除误检 / 补测区域 / 导出。stdout 输出最新状态 JSON
+    /// 编辑会话：选线 / 排除（颜色误判）/ 抹除（误检）/ 补测区域 / 导出。stdout 输出最新状态 JSON
     Edit {
         #[arg(long)]
         session: PathBuf,
@@ -73,9 +73,12 @@ enum Cmd {
         /// 按颜色名选择（中文或英文均可，取面积最大的匹配组，如 red / 红 / orange）
         #[arg(long)]
         select_name: Option<String>,
-        /// 排除的岩点 id（逗号分隔）
+        /// 排除的岩点 id（逗号分隔）：是岩点但颜色误判/不入线路，保留灰度、不被净化抹平
         #[arg(long, value_delimiter = ',')]
         remove: Vec<usize>,
+        /// 抹除的岩点 id（逗号分隔）：判定误检（污渍/螺丝孔，不是岩点），始终满强度净化抹平
+        #[arg(long, value_delimiter = ',')]
+        erase: Vec<usize>,
         /// 补测区域 "x0,y0,x1,y1"（0-1 归一化坐标，可多次指定）
         #[arg(long = "add")]
         add: Vec<String>,
@@ -116,6 +119,7 @@ fn summary_json(dir: &Path, st: &SessionState) -> Value {
         "timing_ms": st.timing_ms,
         "selected": st.selected,
         "excluded": st.excluded,
+        "erased": st.erased,
         "clusters": st.clusters.iter().enumerate().map(|(ci, c)| json!({
             "id": ci,
             "name": names[ci],
@@ -139,7 +143,7 @@ fn summary_json(dir: &Path, st: &SessionState) -> Value {
             "area": h.area,
             "lasso": h.lasso,
         })).collect::<Vec<_>>(),
-        "hint": "edit --select <cluster_id> 选线; --remove <hold_ids> 排除; --add x0,y0,x1,y1(0-1归一化) 补测; --out 导出成品; --debug-out 导出检测框图",
+        "hint": "edit --select <cluster_id> 选线; --remove <hold_ids> 排除(颜色误判,保留灰点); --erase <hold_ids> 抹除(误检,净化抹平); --add x0,y0,x1,y1(0-1归一化) 补测; --out 导出成品; --debug-out 导出检测框图",
     })
 }
 
@@ -151,9 +155,10 @@ fn render_session(st: &SessionState, a: &Analysis, out: &Path) -> Result<()> {
         .context("解码原图")?
         .to_rgba8();
     let excluded: HashSet<usize> = st.excluded.iter().copied().collect();
-    let mask = render::keep_mask(a, st.selected, &excluded, st.params.mask_dilate);
+    let erased: HashSet<usize> = st.erased.iter().copied().collect();
+    let mask = render::keep_mask(a, st.selected, &excluded, &erased, st.params.mask_dilate);
     let mask = render::feather(a, &mask, st.params.feather);
-    let fill = render::fill_layer(a, &excluded, st.params.bg_fill);
+    let fill = render::fill_layer(a, &erased, st.params.bg_fill);
     let img = render::composite_full(&full, a, &mask, st.params.bg_sat, fill.as_ref());
     img.save(out).with_context(|| format!("保存 {}", out.display()))?;
     Ok(())
@@ -182,9 +187,16 @@ fn debug_image(st: &SessionState, a: &Analysis) -> RgbaImage {
     let mut dbg = a.img.clone();
     for h in &st.holds {
         let c = st.clusters.get(h.cluster).map(|c| c.rgb).unwrap_or([128, 128, 128]);
-        let sel = st.selected == Some(h.cluster) && !st.excluded.contains(&h.id);
-        let col = if sel { [255u8, 255, 255] } else { c };
-        let t = if sel { 3 } else { 1 };
+        let sel = st.selected == Some(h.cluster) && !st.excluded.contains(&h.id) && !st.erased.contains(&h.id);
+        let (col, t) = if st.erased.contains(&h.id) {
+            ([217u8, 54, 54], 2) // 抹除：红框（将被净化抹平）
+        } else if st.excluded.contains(&h.id) {
+            ([150u8, 150, 150], 1) // 排除：灰框（保留灰度可见）
+        } else if sel {
+            ([255u8, 255, 255], 3)
+        } else {
+            (c, 1)
+        };
         draw_rect(&mut dbg, h.bbox[0], h.bbox[1], h.bbox[2], h.bbox[3], t, col);
     }
     dbg
@@ -218,6 +230,7 @@ fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, bg_fil
         params: p,
         selected: None,
         excluded: Vec::new(),
+        erased: Vec::new(),
         holds: a.holds.clone(),
         clusters: a.clusters.clone(),
     };
@@ -231,6 +244,7 @@ fn cmd_edit(
     select: Option<isize>,
     select_name: Option<&str>,
     remove: &[usize],
+    erase: &[usize],
     add: &[String],
     out: Option<&Path>,
     debug_out: Option<&Path>,
@@ -266,14 +280,25 @@ fn cmd_edit(
             None => bail!("未找到匹配 '{name}' 的颜色组"),
         }
     }
-    // 排除
+    // 排除（颜色误判，保留灰点）
     if !remove.is_empty() {
         for &id in remove {
             if st.holds.iter().any(|h| h.id == id) {
                 st.excluded.push(id);
+                st.erased.retain(|&x| x != id);
             }
         }
         actions.push(format!("remove={}({} 个)", remove.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","), remove.len()));
+    }
+    // 抹除（误检，始终满强度净化抹平）
+    if !erase.is_empty() {
+        for &id in erase {
+            if st.holds.iter().any(|h| h.id == id) {
+                st.erased.push(id);
+                st.excluded.retain(|&x| x != id);
+            }
+        }
+        actions.push(format!("erase={}({} 个)", erase.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","), erase.len()));
     }
     // 补测（归一化 bbox -> 分析坐标 -> 区域差分）
     let mut added_total = 0usize;
@@ -370,12 +395,13 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(())
         }
-        Some(Cmd::Edit { session, select, select_name, remove, add, out, debug_out }) => {
+        Some(Cmd::Edit { session, select, select_name, remove, erase, add, out, debug_out }) => {
             let v = cmd_edit(
                 session,
                 *select,
                 select_name.as_deref(),
                 remove,
+                erase,
                 add,
                 out.as_deref(),
                 debug_out.as_deref(),
@@ -464,7 +490,7 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
             );
         }
 
-        let mask = render::keep_mask(&a, sel, &HashSet::new(), p.mask_dilate);
+        let mask = render::keep_mask(&a, sel, &HashSet::new(), &HashSet::new(), p.mask_dilate);
         let mask = render::feather(&a, &mask, p.feather);
         let fill = render::fill_layer(&a, &HashSet::new(), p.bg_fill);
         let out_img = render::composite_full(&img.to_rgba8(), &a, &mask, p.bg_sat, fill.as_ref());
@@ -515,6 +541,7 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
                 params: p.clone(),
                 selected: sel,
                 excluded: Vec::new(),
+                erased: Vec::new(),
                 holds: a.holds.clone(),
                 clusters: a.clusters.clone(),
             };

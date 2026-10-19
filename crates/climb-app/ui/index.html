@@ -26,7 +26,8 @@
       <button class="tool" data-tool="pan" title="拖移视图 [1]"><img src="icons/hand.svg" alt="拖移"></button>
       <button class="tool active" data-tool="select" title="点岩点选线 [2]"><img src="icons/cursor-click.svg" alt="选线"></button>
       <button class="tool" data-tool="lasso" title="圈选补测 [3]"><img src="icons/lasso.svg" alt="圈选补测"></button>
-      <button class="tool" data-tool="remove" title="排除误检 [4]"><img src="icons/eraser.svg" alt="移除点"></button>
+      <button class="tool" data-tool="remove" title="抹除误检：这不是岩点，净化抹平 [4]"><img src="icons/eraser.svg" alt="抹除"></button>
+      <button class="tool" data-tool="exclude" title="排除：颜色误判，保留灰点不抹平 [5]"><img src="icons/prohibit.svg" alt="排除"></button>
     </div>
 
     <div class="tb-sep"></div>
@@ -82,6 +83,11 @@
         <div class="param">
           <label for="p-bgsat">背景保留饱和度 <output id="p-bgsat-v"></output></label>
           <input type="range" id="p-bgsat" min="0" max="0.35" step="0.01">
+        </div>
+        <div class="param">
+          <label for="p-bgfill">墙面净化 <output id="p-bgfill-v"></output></label>
+          <input type="range" id="p-bgfill" min="0" max="1" step="0.05">
+          <div class="param-hint">抹平脏墙与螺丝孔；0 = 关闭</div>
         </div>
       </section>
 

@@ -127,7 +127,7 @@ fn synth() -> (Analysis, Vec<(u32, u32)>, (u32, u32)) {
 #[test]
 fn fill_off_matches_plain_grayscale() {
     let (a, ..) = synth();
-    let mask = render::keep_mask(&a, None, &Default::default(), 0);
+    let mask = render::keep_mask(&a, None, &Default::default(), &Default::default(), 0);
     let out = render::composite_preview(&a, &mask, 0.0, None);
     for (px, orig) in out.pixels().zip(a.img.pixels()) {
         let expect = luma(orig.0) as u8; // blend_px: bg_sat=0、alpha=0 时像素 = 亮度（截断）
@@ -147,7 +147,7 @@ fn fill_off_matches_plain_grayscale() {
 fn fill_flattens_wall_follows_gradient_and_spares_hold() {
     let (a, dots, hold_c) = synth();
     let fill = render::fill_layer(&a, &Default::default(), 1.0).expect("bg_fill=1 应产生填充层");
-    let mask = render::keep_mask(&a, Some(0), &Default::default(), 0);
+    let mask = render::keep_mask(&a, Some(0), &Default::default(), &Default::default(), 0);
     let out = render::composite_preview(&a, &mask, 0.0, Some(&fill));
 
     // 1) 螺丝孔被抹平：孔中心亮度 ≈ 邻近墙面亮度（原来暗 60）
@@ -187,20 +187,62 @@ fn fill_strength_zero_is_none() {
     assert!(render::fill_layer(&a, &Default::default(), 0.0).is_none());
 }
 
-/// 用户排除的岩点 = 判定误检，属非岩点区域：净化时应被填掉，而不是留下未填的空洞
+/// 抹除 = 判定误检（这不是岩点）：其区域被填平；且与全局 bg_fill 解耦——
+/// 即使净化滑杆关闭（bg_fill=0），抹除点也始终满强度抹平
 #[test]
-fn fill_covers_excluded_false_positive() {
+fn fill_covers_erased_false_positive() {
     let (a, ..) = synth();
-    let excluded: std::collections::HashSet<usize> = [1].into_iter().collect(); // 排除暗灰脏斑
-    let fill = render::fill_layer(&a, &excluded, 1.0).expect("bg_fill=1 应产生填充层");
-    let mask = render::keep_mask(&a, Some(0), &excluded, 0);
-    let out = render::composite_preview(&a, &mask, 0.0, Some(&fill));
+    let erased: std::collections::HashSet<usize> = [1].into_iter().collect(); // 抹除暗灰脏斑
+    let none: std::collections::HashSet<usize> = Default::default();
 
-    // 脏斑中心（270,270）被填平：亮度 ≈ 邻近墙面；若被当岩点保护，此处会比邻墙暗 ~55
+    // bg_fill=1：脏斑中心（270,270）被填平，亮度 ≈ 邻近墙面
+    let fill = render::fill_layer(&a, &erased, 1.0).expect("bg_fill=1 应产生填充层");
+    let mask = render::keep_mask(&a, Some(0), &none, &erased, 0);
+    let out = render::composite_preview(&a, &mask, 0.0, Some(&fill));
     let spot = luma_at(&out, 270, 270);
     let nb = luma_at(&out, 240, 270);
     assert!(
         (spot - nb).abs() < 12.0,
-        "被排除的误检脏斑应被填平: 斑心 {spot:.0} vs 邻墙 {nb:.0}"
+        "被抹除的误检脏斑应被填平: 斑心 {spot:.0} vs 邻墙 {nb:.0}"
+    );
+
+    // bg_fill=0：仍产生填充层（仅覆盖抹除区域），脏斑被满强度抹成墙面场参考色
+    let fill = render::fill_layer(&a, &erased, 0.0).expect("有抹除点时 bg_fill=0 也应产生填充层");
+    // 满强度：斑心填充 alpha = 255（与滑杆解耦的直接证据）
+    let ci = (270 * W + 270) as usize;
+    assert_eq!(fill.alpha[ci], 255, "抹除区域应满强度填充");
+    let out = render::composite_preview(&a, &mask, 0.0, Some(&fill));
+    // 斑心 ≈ 填充参考色的亮度（原来暗 ~55 的脏斑消失）；邻墙未被净化（alpha=0）保持原样
+    let fr = &fill.rgb[ci * 3..ci * 3 + 3];
+    let expect = luma([fr[0], fr[1], fr[2], 255]);
+    let spot = luma_at(&out, 270, 270);
+    assert!(
+        (spot - expect).abs() < 8.0,
+        "bg_fill=0 时抹除点应被抹成墙面场参考色: 斑心 {spot:.0} vs 参考色 {expect:.0}"
+    );
+    assert!(
+        spot > luma_at(&a.img, 270, 270) + 40.0,
+        "暗脏斑未被抹掉: 抹后 {spot:.0} vs 原始 {:.0}",
+        luma_at(&a.img, 270, 270)
+    );
+}
+
+/// 排除 = 是岩点但颜色误判/不入线路：保留在岩点并集内受保护，
+/// 即使 bg_fill=1 也不被抹平（像素保持原样走灰度化）
+#[test]
+fn fill_spares_excluded_hold() {
+    let (a, ..) = synth();
+    let excluded: std::collections::HashSet<usize> = [1].into_iter().collect(); // 排除暗灰脏斑
+    let none: std::collections::HashSet<usize> = Default::default();
+    let fill = render::fill_layer(&a, &none, 1.0).expect("bg_fill=1 应产生填充层");
+    let mask = render::keep_mask(&a, Some(0), &excluded, &none, 0);
+    let out = render::composite_preview(&a, &mask, 0.0, Some(&fill));
+
+    // 脏斑中心保持原暗度：比被填亮的邻墙暗得多（原暗 ~55）；若被误抹平则两者接近
+    let spot = luma_at(&out, 270, 270);
+    let nb = luma_at(&out, 240, 270);
+    assert!(
+        nb - spot > 25.0,
+        "被排除的岩点不应被抹平: 斑心 {spot:.0} vs 邻墙 {nb:.0}"
     );
 }

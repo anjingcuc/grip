@@ -1,14 +1,14 @@
 //! 输出合成：保留线路岩点颜色，其余灰度化（羽化边缘、全分辨率渲染）
 
-use super::{Analysis, HoldKind};
+use super::{Analysis, Hold, HoldKind};
 use image::{imageops, RgbaImage};
 use rayon::prelude::*;
 use std::collections::HashSet;
 
-/// 生成"保留颜色"掩码（分析分辨率）：选中颜色组、未被排除的岩点像素。
+/// 生成"保留颜色"掩码（分析分辨率）：选中颜色组、未被排除/抹除的岩点像素。
 /// 逐像素颜色约束（Lab 色度平面）：彩色像素须与簇色度中心 (a*,b*) 距离 ≤20，
 /// 低饱和像素（镁粉/胶痕/阴影）直接放行——防止相邻异色岩点串色。
-pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, dilate_r: usize) -> Vec<u8> {
+pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, erased: &HashSet<usize>, dilate_r: usize) -> Vec<u8> {
     let n = (a.aw * a.ah) as usize;
     let mut mask = vec![0u8; n];
     let Some(sel) = sel else { return mask };
@@ -33,11 +33,12 @@ pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, di
             HoldKind::Gray => true,
         }
     };
+    let visible = |h: &&Hold| !excluded.contains(&h.id) && !erased.contains(&h.id);
     // 引用 labels 的自动岩点（回退路径）
     let include_labels: HashSet<u32> = a
         .holds
         .iter()
-        .filter(|h| h.cluster == sel && !excluded.contains(&h.id) && h.label > 0)
+        .filter(|h| h.cluster == sel && visible(h) && h.label > 0)
         .map(|h| h.label)
         .collect();
     for (i, &l) in a.labels.iter().enumerate() {
@@ -47,7 +48,7 @@ pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, di
     }
     // 套索/补测岩点（自包含像素）
     for h in &a.holds {
-        if h.cluster == sel && !excluded.contains(&h.id) && h.label == 0 {
+        if h.cluster == sel && visible(&h) && h.label == 0 {
             for &i in &h.own_pixels {
                 if ok_px(i as usize) {
                     mask[i as usize] = 255;
@@ -82,15 +83,14 @@ pub struct FillLayer {
 const FILL_DILATE: usize = 3;
 const FILL_FEATHER: f32 = 2.0;
 
-/// 所有岩点的并集掩码（label 引用与 own_pixels 两种表示都计入）。
-/// 被排除（excluded）的岩点不并入——排除的语义是"判定误检"，误检属非岩点区域，净化时填掉
-fn holds_union_mask(a: &Analysis, excluded: &HashSet<usize>) -> Vec<u8> {
+/// 按谓词收集岩点并集掩码（label 引用与 own_pixels 两种表示都计入）
+fn holds_mask_impl(a: &Analysis, include: impl Fn(&Hold) -> bool) -> Vec<u8> {
     let n = (a.aw * a.ah) as usize;
     let mut m = vec![0u8; n];
     let include_labels: HashSet<u32> = a
         .holds
         .iter()
-        .filter(|h| h.label > 0 && !excluded.contains(&h.id))
+        .filter(|h| h.label > 0 && include(h))
         .map(|h| h.label)
         .collect();
     if !include_labels.is_empty() {
@@ -101,7 +101,7 @@ fn holds_union_mask(a: &Analysis, excluded: &HashSet<usize>) -> Vec<u8> {
         }
     }
     for h in &a.holds {
-        if h.label == 0 && !excluded.contains(&h.id) {
+        if h.label == 0 && include(h) {
             for &i in &h.own_pixels {
                 m[i as usize] = 255;
             }
@@ -110,22 +110,43 @@ fn holds_union_mask(a: &Analysis, excluded: &HashSet<usize>) -> Vec<u8> {
     m
 }
 
-/// 构造墙面净化填充层；bg_fill <= 0 返回 None（关闭，渲染走原路）
-pub fn fill_layer(a: &Analysis, excluded: &HashSet<usize>, bg_fill: f32) -> Option<FillLayer> {
-    if bg_fill <= 0.0 {
+/// 岩点并集掩码：抹除（erased）的岩点不并入——抹除的语义是"判定误检，这不是岩点"，
+/// 其区域属非岩点区域，净化时填掉。排除（excluded）的岩点**仍并入**——排除只是
+/// 颜色误判/不入线路，点还是岩点，受保护不被抹平（走灰度化）。
+fn holds_union_mask(a: &Analysis, erased: &HashSet<usize>) -> Vec<u8> {
+    holds_mask_impl(a, |h| !erased.contains(&h.id))
+}
+
+/// 构造墙面净化填充层。`bg_fill <= 0` 且无抹除点时返回 None（关闭，渲染走原路）。
+/// 抹除区域始终满强度抹平（与全局 bg_fill 解耦）：用户对误检点说"这不是岩点"，
+/// 期望该区域立即被抹成干净墙面，不受净化滑杆影响。
+pub fn fill_layer(a: &Analysis, erased: &HashSet<usize>, bg_fill: f32) -> Option<FillLayer> {
+    let k = bg_fill.clamp(0.0, 1.0);
+    if k <= 0.0 && erased.is_empty() {
         return None;
     }
     let (w, h) = (a.aw as usize, a.ah as usize);
     let n = w * h;
-    let union = holds_union_mask(a, excluded);
+    let union = holds_union_mask(a, erased);
     let exclude = super::morph::dilate(&union, w, h, FILL_DILATE);
     let field = super::build_fill_field(a.img.as_raw(), &a.sat, &exclude, w, h);
 
     // 填充 alpha = 墙面掩码（岩点并集外扩区的补集）羽化后 × 强度
     let wall: Vec<u8> = exclude.iter().map(|&e| if e > 0 { 0 } else { 255 }).collect();
     let feathered = feather(a, &wall, FILL_FEATHER);
-    let k = bg_fill.clamp(0.0, 1.0);
-    let alpha: Vec<u8> = feathered.iter().map(|&v| ((v as f32 / 255.0) * k * 255.0).round() as u8).collect();
+    let mut alpha: Vec<u8> = feathered.iter().map(|&v| ((v as f32 / 255.0) * k * 255.0).round() as u8).collect();
+
+    // 抹除区域：外扩羽化后满强度（255），压过墙面强度
+    if !erased.is_empty() {
+        let em = holds_mask_impl(a, |h| erased.contains(&h.id));
+        let em = super::morph::dilate(&em, w, h, FILL_DILATE);
+        let em = feather(a, &em, FILL_FEATHER);
+        for (ap, &e) in alpha.iter_mut().zip(em.iter()) {
+            if e > *ap {
+                *ap = e;
+            }
+        }
+    }
 
     // 每像素填充色（墙面场双线性采样 -> RGB）
     let mut rgb = vec![0u8; n * 3];

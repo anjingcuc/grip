@@ -1,4 +1,4 @@
-//! 会话持久化：分析结果 + 用户标注（选线/排除/补测岩点）落盘，CLI 与 Tauri GUI 共用
+//! 会话持久化：分析结果 + 用户标注（选线/排除/抹除/补测岩点）落盘，CLI 与 Tauri GUI 共用
 //!
 //! 位置：`<图片目录>/sessions/<文件名>/state.json` + `analysis.png`
 
@@ -20,7 +20,11 @@ pub struct SessionState {
     pub timing_ms: f32,
     pub params: Params,
     pub selected: Option<usize>,
+    /// 排除：是岩点但颜色误判/不入线路——保留灰度可见，不被净化抹平
     pub excluded: Vec<usize>,
+    /// 抹除：判定误检（污渍/螺丝孔，不是岩点）——始终被净化满强度抹平
+    #[serde(default)]
+    pub erased: Vec<usize>,
     pub holds: Vec<Hold>,
     pub clusters: Vec<Cluster>,
 }

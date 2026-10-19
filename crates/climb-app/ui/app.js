@@ -35,7 +35,8 @@ const TOOL_HINTS = {
   pan: "拖移视图 · 滚轮缩放 · 双击复位",
   select: "点击岩点 → 保留该颜色线路",
   lasso: "拖圈 = 漏检区域补测并并入所选线路 · 点岩点 = 直接并入所选线路",
-  remove: "点击岩点 → 排除/恢复",
+  remove: "点击岩点 → 抹除误检（净化抹平）/ 恢复",
+  exclude: "点击岩点 → 排除（颜色误判，保留灰点）/ 恢复",
 };
 
 // ============ 日志 ============
@@ -91,7 +92,7 @@ function drawOverlay() {
   // 已选线路时清屏：只画所选线路的岩点（框不再杂乱）；未选时全量展示便于浏览
   const showAll = sum.selected == null;
   for (const h of sum.holds) {
-    const route = sum.selected != null && h.cluster === sum.selected && !h.excluded;
+    const route = sum.selected != null && h.cluster === sum.selected && !h.excluded && !h.erased;
     if (!showAll && h.cluster !== sum.selected) continue;
     const [x0, y0, x1, y1] = h.bbox;
     if (x1 - x0 < 2 || y1 - y0 < 2) continue;
@@ -117,9 +118,9 @@ function drawOverlay() {
     r.setAttribute("x", x0); r.setAttribute("y", y0);
     r.setAttribute("width", x1 - x0); r.setAttribute("height", y1 - y0);
     r.setAttribute("rx", rx);
-    r.setAttribute("class", "hold-rect" + (route ? " route" : "") + (h.excluded ? " excluded" : ""));
-    r.setAttribute("stroke", h.excluded ? "#d93636" : (route ? "#fff" : (cl ? rgbStr(cl.rgb) : "#888")));
-    if (!route && !h.excluded) r.setAttribute("opacity", "0.75");
+    r.setAttribute("class", "hold-rect" + (route ? " route" : "") + (h.erased ? " erased" : h.excluded ? " excluded" : ""));
+    r.setAttribute("stroke", h.erased ? "#d93636" : h.excluded ? "#e6a23c" : (route ? "#fff" : (cl ? rgbStr(cl.rgb) : "#888")));
+    if (!route && !h.excluded && !h.erased) r.setAttribute("opacity", "0.75");
     frag.appendChild(r);
   }
   overlay.appendChild(frag);
@@ -168,6 +169,8 @@ async function analyzeImage(path, force) {
     const sum = await invoke(force ? "reanalyze" : "analyze", { path });
     S.summaries.set(path, sum);
     scanOverlay.hidden = true;
+    // 会话恢复可能带回了保存的参数（墙面净化强度等），同步滑杆位置
+    syncParamUI(await invoke("get_params"));
     // 初始预览 = 原图（未选线时全灰没有意义）
     S.previews.set(path, { orig: convertFileSrc(path), result: null });
     renderSidebars();
@@ -288,6 +291,19 @@ async function toggleExclude(holdId) {
   } catch (e) { msg(e); }
 }
 
+async function toggleErase(holdId) {
+  if (!S.cur) return;
+  try {
+    const r = await invoke("toggle_erase", { path: S.cur, holdId });
+    S.summaries.set(S.cur, r.summary);
+    const pv = S.previews.get(S.cur);
+    if (pv) { pv.result = r.preview; }
+    if (S.view === "result") showResult(r.preview);
+    drawOverlay();
+    msg("已切换岩点抹除状态（已保存）");
+  } catch (e) { msg(e); }
+}
+
 async function assignHold(holdId, clusterId) {
   if (!S.cur) return;
   try {
@@ -344,13 +360,15 @@ overlay.addEventListener("pointerdown", (ev) => {
     S.lassoPts = [normPoint(ev)];
     overlay.setPointerCapture(ev.pointerId);
     ev.preventDefault();
-  } else if (S.tool === "select" || S.tool === "remove") {
+  } else if (S.tool === "select" || S.tool === "remove" || S.tool === "exclude") {
     const ip = imgNormPoint(ev);
     const hit = hitTest(ip);
     if (!hit) return;
     if (S.tool === "select") {
       const sum = curSummary();
       if (hit.cluster != null && sum) selectCluster(hit.cluster);
+    } else if (S.tool === "remove") {
+      toggleErase(hit.id);
     } else {
       toggleExclude(hit.id);
     }
@@ -515,13 +533,25 @@ document.querySelectorAll("#view-toggle .seg-btn").forEach((b) => {
 });
 
 // ============ 参数 ============
+function syncParamUI(params) {
+  $("#p-wallk").value = params.wall_k;
+  $("#p-wallk-v").textContent = params.wall_k.toFixed(1);
+  $("#p-minarea").value = Math.log10(params.min_area_frac);
+  $("#p-minarea-v").textContent = (params.min_area_frac * 100).toFixed(3) + "%";
+  $("#p-feather").value = params.feather;
+  $("#p-feather-v").textContent = params.feather.toFixed(1);
+  $("#p-bgsat").value = params.bg_sat;
+  $("#p-bgsat-v").textContent = params.bg_sat.toFixed(2);
+  $("#p-bgfill").value = params.bg_fill;
+  $("#p-bgfill-v").textContent = params.bg_fill.toFixed(2);
+}
 function bindParam(id, key, fmt, apply, transform) {
   const el = $(id);
   el.addEventListener("change", async () => {
     const raw = parseFloat(el.value);
     $(id + "-v").textContent = fmt(raw);
     const v = transform ? transform(raw) : raw;
-    await invoke("set_params", { patch: { [key]: v } });
+    await invoke("set_params", { patch: { [key]: v }, path: S.cur });
     if (S.cur && S.summaries.has(S.cur)) {
       if (apply === "reanalyze") analyzeImage(S.cur, true);
       else {
@@ -542,6 +572,7 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "2") setTool("select");
   if (ev.key === "3") setTool("lasso");
   if (ev.key === "4") setTool("remove");
+  if (ev.key === "5") setTool("exclude");
   if (ev.key === "o" || ev.key === "O") $("#overlay-toggle").click();
   if (ev.key === "f" || ev.key === "F") $("#btn-fit").click();
   if (ev.key === "e" || ev.key === "E") $("#btn-export").click();
@@ -602,18 +633,12 @@ async function boot() {
   document.querySelector("#view-toggle .seg-btn[data-view='result']").classList.add("active");
   // 参数初始化
   const params = await invoke("get_params");
-  $("#p-wallk").value = params.wall_k;
-  $("#p-wallk-v").textContent = params.wall_k.toFixed(1);
-  $("#p-minarea").value = Math.log10(params.min_area_frac);
-  $("#p-minarea-v").textContent = (params.min_area_frac * 100).toFixed(3) + "%";
-  $("#p-feather").value = params.feather;
-  $("#p-feather-v").textContent = params.feather.toFixed(1);
-  $("#p-bgsat").value = params.bg_sat;
-  $("#p-bgsat-v").textContent = params.bg_sat.toFixed(2);
+  syncParamUI(params);
   bindParam("#p-wallk", "wall_k", (v) => v.toFixed(1), "reanalyze");
   bindParam("#p-minarea", "min_area_frac", (v) => (Math.pow(10, v) * 100).toFixed(3) + "%", "reanalyze", (v) => Math.pow(10, v));
   bindParam("#p-feather", "feather", (v) => v.toFixed(1), "render");
   bindParam("#p-bgsat", "bg_sat", (v) => v.toFixed(2), "render");
+  bindParam("#p-bgfill", "bg_fill", (v) => v.toFixed(2), "render");
   const info = await invoke("get_state");
   $("#model-status").textContent = `${info.holds_status} · ${info.sam_status}`;
   await openFolder(info.cwd);
