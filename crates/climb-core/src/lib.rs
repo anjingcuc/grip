@@ -398,6 +398,86 @@ fn classify_stats(s: &CompStats, min_colored_frac: f32) -> HoldKind {
     }
 }
 
+// ---------------- SAM 框提示的触边扩框（大造型欠覆盖修复，issue #7） ----------------
+
+/// 类别感知的取样窗口外扩比例：大体积 0.35，普通岩点 0.18
+pub(crate) fn sam_margin(cls: usize) -> f32 {
+    if cls == 1 {
+        0.35
+    } else {
+        0.18
+    }
+}
+
+/// 框 + 外扩比例 -> 取样窗口（分析图像素坐标，裁剪到图内，保证非空）
+fn sam_window(b: [f32; 4], ex: f32, aw: u32, ah: u32) -> (usize, usize, usize, usize) {
+    let (bw, bh) = (b[2] - b[0], b[3] - b[1]);
+    let x0 = ((b[0] - bw * ex).max(0.0)) as usize;
+    let y0 = ((b[1] - bh * ex).max(0.0)) as usize;
+    let x1 = ((b[2] + bw * ex).min(aw as f32)).ceil() as usize;
+    let y1 = ((b[3] + bh * ex).min(ah as f32)).ceil() as usize;
+    (x0, y0, x1.max(x0 + 1), y1.max(y0 + 1))
+}
+
+/// 掩码（logit>0）是否触到窗口内缘：触边 = 物体很可能超出提示框，值得扩框重切
+fn mask_touches_edge(emb: &sam::SamEmbedding, grid: &[f32], win: (usize, usize, usize, usize)) -> bool {
+    let (x0, y0, x1, y1) = win;
+    if x1 - x0 < 8 || y1 - y0 < 8 {
+        return false;
+    }
+    let (xi0, yi0, xi1, yi1) = (x0 + 2, y0 + 2, x1 - 3, y1 - 3);
+    let mut hits = 0usize;
+    let mut x = xi0;
+    while x <= xi1 {
+        for y in [yi0, yi1] {
+            if emb.sample_logit(grid, x as f32 + 0.5, y as f32 + 0.5) > 0.0 {
+                hits += 1;
+            }
+        }
+        x += 2;
+    }
+    let mut y = yi0;
+    while y <= yi1 {
+        for x in [xi0, xi1] {
+            if emb.sample_logit(grid, x as f32 + 0.5, y as f32 + 0.5) > 0.0 {
+                hits += 1;
+            }
+        }
+        y += 2;
+    }
+    hits >= 3
+}
+
+/// 窗口内掩码正采样数（停滞判据：扩框后掩码不再增长说明已覆盖完整）
+fn mask_positives(emb: &sam::SamEmbedding, grid: &[f32], win: (usize, usize, usize, usize)) -> usize {
+    let (x0, y0, x1, y1) = win;
+    let mut cnt = 0usize;
+    let mut y = y0;
+    while y < y1 {
+        let mut x = x0;
+        while x < x1 {
+            if emb.sample_logit(grid, x as f32 + 0.5, y as f32 + 0.5) > 0.0 {
+                cnt += 1;
+            }
+            x += 3;
+        }
+        y += 3;
+    }
+    cnt
+}
+
+/// 框四边各扩 pct/2，裁剪到图内
+fn grow_box(b: [f32; 4], pct: f32, aw: u32, ah: u32) -> [f32; 4] {
+    let dx = (b[2] - b[0]) * pct / 2.0;
+    let dy = (b[3] - b[1]) * pct / 2.0;
+    [
+        (b[0] - dx).max(0.0),
+        (b[1] - dy).max(0.0),
+        (b[2] + dx).min(aw as f32),
+        (b[3] + dy).min(ah as f32),
+    ]
+}
+
 /// 全自动分析一张图
 pub fn analyze(full: &DynamicImage, p: &Params) -> Analysis {
     analyze_with_progress(full, p, &|_| {})
@@ -447,30 +527,50 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
         } else {
             None
         };
-        // SAM 解码并行化：各框独立，共享 embedding（tract 模型线程安全）
-        let sam_grids: Vec<Option<Vec<f32>>> = if let (Some(s), Some(e)) = (sam, emb.as_ref()) {
+        // SAM 解码并行化：各框独立，共享 embedding（tract 模型线程安全）。
+        // 触边扩框闭环（issue #7）：掩码触到取样窗口边缘 → 扩提示框 25% 重切，
+        // 最多 3 次解码；掩码不再增长（停滞）即收敛。大体积框用更大初始窗口（0.35）。
+        let sam_grids: Vec<Option<(Vec<f32>, [f32; 4])>> = if let (Some(s), Some(e)) = (sam, emb.as_ref()) {
             use rayon::prelude::*;
             boxes
                 .par_iter()
-                .map(|(_conf, b)| {
+                .map(|(_conf, cls, b)| {
                     let (bw, bh) = (b[2] - b[0], b[3] - b[1]);
-                    if bw >= 22.0 && bh >= 22.0 {
-                        s.mask_for_box(e, *b).map(|(g, _)| g)
-                    } else {
-                        None
+                    if bw < 22.0 || bh < 22.0 {
+                        return None;
                     }
+                    let margin = sam_margin(*cls);
+                    let mut bx = *b;
+                    let (mut grid, _) = s.mask_for_box(e, bx)?;
+                    let mut prev = mask_positives(e, &grid, sam_window(bx, margin, aw, ah));
+                    for _ in 0..2 {
+                        if !mask_touches_edge(e, &grid, sam_window(bx, margin, aw, ah)) {
+                            break;
+                        }
+                        bx = grow_box(bx, 0.25, aw, ah);
+                        let (g2, _) = s.mask_for_box(e, bx)?;
+                        let cnt = mask_positives(e, &g2, sam_window(bx, margin, aw, ah));
+                        let stagnated = (cnt as f32) < prev as f32 * 1.05;
+                        grid = g2;
+                        prev = cnt;
+                        if stagnated {
+                            break;
+                        }
+                    }
+                    Some((grid, bx))
                 })
                 .collect()
         } else {
             vec![None; boxes.len()]
         };
-        for (bi, (_conf, b)) in boxes.iter().enumerate() {
-            let b = *b;
+        for (bi, (_conf, cls, ob)) in boxes.iter().enumerate() {
+            // 最终提示框（可能已被触边扩框放大）；无 SAM 时用 YOLO 原框
+            let b = sam_grids[bi].as_ref().map(|(_, gb)| *gb).unwrap_or(*ob);
             let (bw, bh) = (b[2] - b[0], b[3] - b[1]);
             if bw < 5.0 || bh < 5.0 {
                 continue;
             }
-            let ex = 0.18;
+            let ex = sam_margin(*cls);
             let x0 = ((b[0] - bw * ex).max(0.0)) as usize;
             let y0 = ((b[1] - bh * ex).max(0.0)) as usize;
             let x1 = ((b[2] + bw * ex).min(aw as f32)).ceil() as usize;
@@ -484,7 +584,7 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
             let mut found: Vec<Hold> = Vec::new();
             let mut sam_ok = false;
             if let (Some(s), Some(e), Some(lab)) = (sam, emb.as_ref(), lab_opt.as_deref()) {
-                if let Some(grid) = sam_grids[bi].as_ref() {
+                if let Some((grid, _)) = sam_grids[bi].as_ref() {
                     {
                         let wall = local_wall_ref(lab, &sat, w, x0, y0, cw, chh);
                         let t_lo = wall.map(|(_, sg)| (p.wall_k * sg * 0.55).clamp(4.0, 18.0));

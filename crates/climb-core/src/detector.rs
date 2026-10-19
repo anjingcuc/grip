@@ -142,13 +142,10 @@ impl YoloDetect {
         }
     }
 
-    /// 检测岩点框（整图 + 低置信时 3×3 滑窗二阶段），返回输入图坐标 px
-    pub fn detect_holds(&self, img: &RgbaImage) -> Vec<(f32, [f32; 4])> {
-        let mut out: Vec<(f32, [f32; 4])> = self
-            .detect(img, HOLD_CONF, None)
-            .into_iter()
-            .map(|(c, _, b)| (c, b))
-            .collect();
+    /// 检测岩点框（整图 + 低置信时 3×3 滑窗二阶段），返回 (conf, class, box) 输入图坐标 px。
+    /// class：0=岩点 1=大体积——类别信号对主路有用（大体积需更大取样窗口/触边扩框），不得丢弃
+    pub fn detect_holds(&self, img: &RgbaImage) -> Vec<(f32, usize, [f32; 4])> {
+        let mut out: Vec<(f32, usize, [f32; 4])> = self.detect(img, HOLD_CONF, None);
         // 二阶段：检出太少时滑窗放大（应对整墙小岩点）
         if out.len() < 8 {
             let (iw, ih) = (img.width() as usize, img.height() as usize);
@@ -162,15 +159,14 @@ impl YoloDetect {
                     let x0 = ((iw * gx) / 4).min(iw - cw);
                     let y0 = ((ih * gy) / 4).min(ih - ch);
                     let crop = image::imageops::crop_imm(img, x0 as u32, y0 as u32, cw as u32, ch as u32).to_image();
-                    for (c, _, b) in self.detect(&crop, HOLD_CONF + 0.1, None) {
-                        out.push((c, [b[0] + x0 as f32, b[1] + y0 as f32, b[2] + x0 as f32, b[3] + y0 as f32]));
+                    for (c, cls, b) in self.detect(&crop, HOLD_CONF + 0.1, None) {
+                        out.push((c, cls, [b[0] + x0 as f32, b[1] + y0 as f32, b[2] + x0 as f32, b[3] + y0 as f32]));
                     }
                 }
             }
         }
         // 全局 NMS 去重（跨窗重叠）
-        let multi: Vec<(f32, usize, [f32; 4])> = out.into_iter().map(|(c, b)| (c, 0, b)).collect();
-        nms_multi(multi).into_iter().map(|(c, _, b)| (c, b)).collect()
+        nms_multi(out)
     }
 }
 

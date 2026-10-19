@@ -151,6 +151,8 @@ body {
   font-size: 12.5px; cursor: pointer; color: var(--text);
   transition: background 0.1s ease;
   border: 1px solid transparent;
+  /* flex 列容器内禁止压扁：否则列表超高时行高被压缩、文字叠在一起（issue #6） */
+  flex-shrink: 0;
 }
 .list-item:hover { background: var(--panel-2); }
 .list-item.active { background: var(--accent-soft); border-color: var(--accent-soft-2); color: var(--accent-press); font-weight: 600; }

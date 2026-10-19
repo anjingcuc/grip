@@ -6,16 +6,42 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 
 /// 生成"保留颜色"掩码（分析分辨率）：选中颜色组、未被排除/抹除的岩点像素。
-/// 逐像素颜色约束（Lab 色度平面）：彩色像素须与簇色度中心 (a*,b*) 距离 ≤20，
-/// 低饱和像素（镁粉/胶痕/阴影）直接放行——防止相邻异色岩点串色。
+/// 岩点轮廓内部不做颜色校验、统一保色（暗部/污渍/侧光不再被抠成灰黑斑——issue #5）；
+/// 逐像素颜色约束（Lab 色度平面，与簇色度中心 (a*,b*) 距离 ≤20，低饱和放行）只作用于
+/// 掩码外扩边缘带——防相邻异色岩点串色的既有能力保留在外扩环内。
 pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, erased: &HashSet<usize>, dilate_r: usize) -> Vec<u8> {
     let n = (a.aw * a.ah) as usize;
-    let mut mask = vec![0u8; n];
-    let Some(sel) = sel else { return mask };
+    let mut core = vec![0u8; n];
+    let Some(sel) = sel else { return core };
     if sel >= a.clusters.len() {
-        return mask;
+        return core;
     }
     let cl = &a.clusters[sel];
+    let visible = |h: &&Hold| !excluded.contains(&h.id) && !erased.contains(&h.id);
+    // 引用 labels 的自动岩点（回退路径）
+    let include_labels: HashSet<u32> = a
+        .holds
+        .iter()
+        .filter(|h| h.cluster == sel && visible(h) && h.label > 0)
+        .map(|h| h.label)
+        .collect();
+    for (i, &l) in a.labels.iter().enumerate() {
+        if l > 0 && include_labels.contains(&l) {
+            core[i] = 255;
+        }
+    }
+    // 套索/补测岩点（自包含像素）
+    for h in &a.holds {
+        if h.cluster == sel && visible(&h) && h.label == 0 {
+            for &i in &h.own_pixels {
+                core[i as usize] = 255;
+            }
+        }
+    }
+    if dilate_r == 0 {
+        return core;
+    }
+    // 外扩边缘带：逐像素颜色约束（仅环带，不碰轮廓内部）
     let raw = a.img.as_raw();
     let ok_px = |i: usize| -> bool {
         let (h, s, v) = (a.hue[i], a.sat[i], a.val[i]);
@@ -33,34 +59,14 @@ pub fn keep_mask(a: &Analysis, sel: Option<usize>, excluded: &HashSet<usize>, er
             HoldKind::Gray => true,
         }
     };
-    let visible = |h: &&Hold| !excluded.contains(&h.id) && !erased.contains(&h.id);
-    // 引用 labels 的自动岩点（回退路径）
-    let include_labels: HashSet<u32> = a
-        .holds
-        .iter()
-        .filter(|h| h.cluster == sel && visible(h) && h.label > 0)
-        .map(|h| h.label)
-        .collect();
-    for (i, &l) in a.labels.iter().enumerate() {
-        if l > 0 && include_labels.contains(&l) && ok_px(i) {
+    let dil = super::morph::dilate(&core, a.aw as usize, a.ah as usize, dilate_r);
+    let mut mask = core;
+    for i in 0..n {
+        if mask[i] == 0 && dil[i] > 0 && ok_px(i) {
             mask[i] = 255;
         }
     }
-    // 套索/补测岩点（自包含像素）
-    for h in &a.holds {
-        if h.cluster == sel && visible(&h) && h.label == 0 {
-            for &i in &h.own_pixels {
-                if ok_px(i as usize) {
-                    mask[i as usize] = 255;
-                }
-            }
-        }
-    }
-    if dilate_r > 0 {
-        super::morph::dilate(&mask, a.aw as usize, a.ah as usize, dilate_r)
-    } else {
-        mask
-    }
+    mask
 }
 
 /// 掩码羽化（柔和边缘）
