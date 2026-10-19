@@ -67,7 +67,7 @@ session.rs   标注持久化：<图片目录>/sessions/<文件名>/state.json + 
 - 岩点像素双表示：`label > 0` 引用 `Analysis.labels`（仅无 YOLO 回退路径）；`label == 0` 用 `own_pixels`（主路）。`keep_mask` 两条路径都要处理。**会话保存前必须 `materialize_labels`**。
 - `Analysis.hue/sat/val`（分析分辨率 HSV）是渲染颜色约束的数据源，删字段会破坏防串色。
 - SAM 掩码必须与"非墙证据"求交后再连通域拆分——直接用原始 SAM 掩码会产生横跨多点的条带合并（已验证的失败模式）。
-- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）。
+- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）。**墙面净化**：`bg_fill`（0=关闭）；填充取样 = 块内低饱和（sat<0.20，同 `build_wall_field` 口径）像素 P90 明度 + 亮部中位数色，稀疏块回退 3×3 邻块→全局；岩点并集外扩 `FILL_DILATE` 3px + 羽化 `FILL_FEATHER` 2px（`render.rs`）；被排除的岩点不并入并集（误检=墙面，填掉）。
 - **颜色命名/展示色相用 Lab 色度角** `atan2(b*,a*)`（锚点：红26/橙58/黄82/绿150/青200/蓝280/紫315/品红355），不是 HSV 色相——暗光下 HSV 色相漂移会把橙读成红（`color_name_ab`）。CLI `--hue` 用同一角。簇色卡 = `display_rgb(ab)`（低色度提亮到色度 28，仅显示用途）。**同名颜色组用 `disambiguated_names` 追加 ①②③**。
 - tract 模型可跨线程共享（rayon par_iter 共用 decoder 已验证）。
 

@@ -208,7 +208,8 @@ fn build_summary(path: &Path, e: &ImgEntry) -> Summary {
 fn render_preview_url(e: &ImgEntry, params: &Params) -> Result<String, String> {
     let mask = render::keep_mask(&e.a, e.sel, &e.excluded, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
-    let img = render::composite_preview(&e.a, &mask, params.bg_sat);
+    let fill = render::fill_layer(&e.a, &e.excluded, params.bg_fill);
+    let img = render::composite_preview(&e.a, &mask, params.bg_sat, fill.as_ref());
     let mut buf = std::io::Cursor::new(Vec::new());
     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 84);
     enc.encode_image(&image::DynamicImage::ImageRgba8(img)).map_err(|e| e.to_string())?;
@@ -601,7 +602,8 @@ async fn export_current(app: AppHandle, state: State<'_, AppState>, path: String
     let e = imgs.get(&pb).ok_or("未分析")?;
     let mask = render::keep_mask(&e.a, e.sel, &e.excluded, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
-    let img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat);
+    let fill = render::fill_layer(&e.a, &e.excluded, params.bg_fill);
+    let img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat, fill.as_ref());
     img.save(&target).map_err(|e2| e2.to_string())?;
     Ok(Some(target))
 }
@@ -632,7 +634,8 @@ async fn batch_export(app: AppHandle, state: State<'_, AppState>, folder: String
                         .map(|(ci, _)| ci);
                     let mask = render::keep_mask(&a, sel, &Default::default(), params.mask_dilate);
                     let mask = render::feather(&a, &mask, params.feather);
-                    let img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat);
+                    let fill = render::fill_layer(&a, &Default::default(), params.bg_fill);
+                    let img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat, fill.as_ref());
                     let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
                     if img.save(out.join(format!("{stem}_route.png"))).is_ok() {
                         done += 1;

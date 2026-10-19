@@ -70,6 +70,85 @@ pub fn feather(a: &Analysis, mask: &[u8], radius: f32) -> Vec<u8> {
     super::morph::blur(mask, a.aw as usize, a.ah as usize, radius)
 }
 
+// ---------------- 墙面净化（Wall Fill）：非岩点区域填墙面场亮部参考色，先于灰度化 ----------------
+
+/// 填充层（分析分辨率）：每像素墙面参考色 + 填充 alpha（已含强度）
+pub struct FillLayer {
+    pub rgb: Vec<u8>,
+    pub alpha: Vec<u8>,
+}
+
+/// 填充边界：岩点并集外扩/羽化半径（分析分辨率 px）——外扩吃掉掩码边缘 halo 与镁粉圈
+const FILL_DILATE: usize = 3;
+const FILL_FEATHER: f32 = 2.0;
+
+/// 所有岩点的并集掩码（label 引用与 own_pixels 两种表示都计入）。
+/// 被排除（excluded）的岩点不并入——排除的语义是"判定误检"，误检属非岩点区域，净化时填掉
+fn holds_union_mask(a: &Analysis, excluded: &HashSet<usize>) -> Vec<u8> {
+    let n = (a.aw * a.ah) as usize;
+    let mut m = vec![0u8; n];
+    let include_labels: HashSet<u32> = a
+        .holds
+        .iter()
+        .filter(|h| h.label > 0 && !excluded.contains(&h.id))
+        .map(|h| h.label)
+        .collect();
+    if !include_labels.is_empty() {
+        for (i, &l) in a.labels.iter().enumerate() {
+            if l > 0 && include_labels.contains(&l) {
+                m[i] = 255;
+            }
+        }
+    }
+    for h in &a.holds {
+        if h.label == 0 && !excluded.contains(&h.id) {
+            for &i in &h.own_pixels {
+                m[i as usize] = 255;
+            }
+        }
+    }
+    m
+}
+
+/// 构造墙面净化填充层；bg_fill <= 0 返回 None（关闭，渲染走原路）
+pub fn fill_layer(a: &Analysis, excluded: &HashSet<usize>, bg_fill: f32) -> Option<FillLayer> {
+    if bg_fill <= 0.0 {
+        return None;
+    }
+    let (w, h) = (a.aw as usize, a.ah as usize);
+    let n = w * h;
+    let union = holds_union_mask(a, excluded);
+    let exclude = super::morph::dilate(&union, w, h, FILL_DILATE);
+    let field = super::build_fill_field(a.img.as_raw(), &a.sat, &exclude, w, h);
+
+    // 填充 alpha = 墙面掩码（岩点并集外扩区的补集）羽化后 × 强度
+    let wall: Vec<u8> = exclude.iter().map(|&e| if e > 0 { 0 } else { 255 }).collect();
+    let feathered = feather(a, &wall, FILL_FEATHER);
+    let k = bg_fill.clamp(0.0, 1.0);
+    let alpha: Vec<u8> = feathered.iter().map(|&v| ((v as f32 / 255.0) * k * 255.0).round() as u8).collect();
+
+    // 每像素填充色（墙面场双线性采样 -> RGB）
+    let mut rgb = vec![0u8; n * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let (lab, _) = super::wall_ref(&field, x, y);
+            let [r, g, b] = super::hsv::lab_to_rgb(lab[0], lab[1], lab[2]);
+            let i = (y * w + x) * 3;
+            rgb[i] = r;
+            rgb[i + 1] = g;
+            rgb[i + 2] = b;
+        }
+    }
+    Some(FillLayer { rgb, alpha })
+}
+
+#[inline]
+fn fill_px(px: &mut [u8], fc: &[u8], t: f32) {
+    px[0] = (px[0] as f32 + (fc[0] as f32 - px[0] as f32) * t) as u8;
+    px[1] = (px[1] as f32 + (fc[1] as f32 - px[1] as f32) * t) as u8;
+    px[2] = (px[2] as f32 + (fc[2] as f32 - px[2] as f32) * t) as u8;
+}
+
 #[inline]
 fn blend_px(px: &mut [u8], a: f32, bg_sat: f32) {
     let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
@@ -83,26 +162,53 @@ fn blend_px(px: &mut [u8], a: f32, bg_sat: f32) {
     px[2] = (gb + (b - gb) * a).clamp(0.0, 255.0) as u8;
 }
 
-/// 全分辨率合成：mask 为分析分辨率的羽化掩码，双线性放大到原图尺寸
-pub fn composite_full(full: &RgbaImage, a: &Analysis, mask: &[u8], bg_sat: f32) -> RgbaImage {
+/// 全分辨率合成：mask 为分析分辨率的羽化掩码，双线性放大到原图尺寸；
+/// fill 存在时先把非岩点区域混向墙面参考色（净化底图），再走保色/灰度合成
+pub fn composite_full(full: &RgbaImage, a: &Analysis, mask: &[u8], bg_sat: f32, fill: Option<&FillLayer>) -> RgbaImage {
     let alpha_small = image::GrayImage::from_raw(a.aw, a.ah, mask.to_vec()).expect("mask size mismatch");
     let alpha = imageops::resize(&alpha_small, a.fw, a.fh, imageops::FilterType::Triangle);
     let mut buf: Vec<u8> = full.as_raw().clone();
-    buf.par_chunks_exact_mut(4)
-        .zip_eq(alpha.as_raw().par_chunks_exact(1))
-        .for_each(|(px, al)| {
-            blend_px(px, al[0] as f32 / 255.0, bg_sat);
-        });
+    if let Some(f) = fill {
+        let frgb_small = image::RgbImage::from_raw(a.aw, a.ah, f.rgb.clone()).expect("fill rgb size mismatch");
+        let frgb = imageops::resize(&frgb_small, a.fw, a.fh, imageops::FilterType::Triangle);
+        let fa_small = image::GrayImage::from_raw(a.aw, a.ah, f.alpha.clone()).expect("fill alpha size mismatch");
+        let fa = imageops::resize(&fa_small, a.fw, a.fh, imageops::FilterType::Triangle);
+        buf.par_chunks_exact_mut(4)
+            .zip_eq(alpha.as_raw().par_chunks_exact(1))
+            .zip_eq(frgb.as_raw().par_chunks_exact(3))
+            .zip_eq(fa.as_raw().par_chunks_exact(1))
+            .for_each(|(((px, al), fc), fa)| {
+                fill_px(px, fc, fa[0] as f32 / 255.0);
+                blend_px(px, al[0] as f32 / 255.0, bg_sat);
+            });
+    } else {
+        buf.par_chunks_exact_mut(4)
+            .zip_eq(alpha.as_raw().par_chunks_exact(1))
+            .for_each(|(px, al)| {
+                blend_px(px, al[0] as f32 / 255.0, bg_sat);
+            });
+    }
     RgbaImage::from_raw(a.fw, a.fh, buf).expect("buffer size mismatch")
 }
 
-/// 分析分辨率预览（GUI 用，速度快）
-pub fn composite_preview(a: &Analysis, mask: &[u8], bg_sat: f32) -> RgbaImage {
+/// 分析分辨率预览（GUI 用，速度快）；fill 语义同 composite_full
+pub fn composite_preview(a: &Analysis, mask: &[u8], bg_sat: f32, fill: Option<&FillLayer>) -> RgbaImage {
     let mut buf: Vec<u8> = a.img.as_raw().clone();
-    buf.par_chunks_exact_mut(4)
-        .zip_eq(mask.par_chunks_exact(1))
-        .for_each(|(px, m)| {
-            blend_px(px, m[0] as f32 / 255.0, bg_sat);
-        });
+    if let Some(f) = fill {
+        buf.par_chunks_exact_mut(4)
+            .zip_eq(mask.par_chunks_exact(1))
+            .zip_eq(f.rgb.par_chunks_exact(3))
+            .zip_eq(f.alpha.par_chunks_exact(1))
+            .for_each(|(((px, m), fc), fa)| {
+                fill_px(px, fc, fa[0] as f32 / 255.0);
+                blend_px(px, m[0] as f32 / 255.0, bg_sat);
+            });
+    } else {
+        buf.par_chunks_exact_mut(4)
+            .zip_eq(mask.par_chunks_exact(1))
+            .for_each(|(px, m)| {
+                blend_px(px, m[0] as f32 / 255.0, bg_sat);
+            });
+    }
     RgbaImage::from_raw(a.aw, a.ah, buf).expect("buffer size mismatch")
 }

@@ -32,6 +32,9 @@ struct Args {
     k: f32,
     #[arg(long, default_value_t = 0.0)]
     bg_sat: f32,
+    /// [批处理] 墙面净化强度 0-1（非岩点区域填墙面亮部参考色，先于灰度化）
+    #[arg(long, default_value_t = 0.0)]
+    bg_fill: f32,
     #[arg(long, default_value_t = 1600)]
     max_dim: u32,
     #[arg(long)]
@@ -54,6 +57,9 @@ enum Cmd {
         k: f32,
         #[arg(long, default_value_t = 0.0)]
         bg_sat: f32,
+        /// 墙面净化强度 0-1（非岩点区域填墙面亮部参考色，先于灰度化）
+        #[arg(long, default_value_t = 0.0)]
+        bg_fill: f32,
         #[arg(long, default_value_t = 1600)]
         max_dim: u32,
     },
@@ -147,7 +153,8 @@ fn render_session(st: &SessionState, a: &Analysis, out: &Path) -> Result<()> {
     let excluded: HashSet<usize> = st.excluded.iter().copied().collect();
     let mask = render::keep_mask(a, st.selected, &excluded, st.params.mask_dilate);
     let mask = render::feather(a, &mask, st.params.feather);
-    let img = render::composite_full(&full, a, &mask, st.params.bg_sat);
+    let fill = render::fill_layer(a, &excluded, st.params.bg_fill);
+    let img = render::composite_full(&full, a, &mask, st.params.bg_sat, fill.as_ref());
     img.save(out).with_context(|| format!("保存 {}", out.display()))?;
     Ok(())
 }
@@ -185,10 +192,11 @@ fn debug_image(st: &SessionState, a: &Analysis) -> RgbaImage {
 
 // ---------------- agent 子命令 ----------------
 
-fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, max_dim: u32) -> Result<Value> {
+fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, bg_fill: f32, max_dim: u32) -> Result<Value> {
     let mut p = Params::default();
     p.wall_k = k;
     p.bg_sat = bg_sat;
+    p.bg_fill = bg_fill;
     p.analysis_max_dim = max_dim;
     let dyn_img = image::ImageReader::open(image)
         .with_context(|| format!("打开 {}", image.display()))?
@@ -357,8 +365,8 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match &args.cmd {
-        Some(Cmd::Analyze { image, session, k, bg_sat, max_dim }) => {
-            let v = cmd_analyze(image, session.as_deref(), *k, *bg_sat, *max_dim)?;
+        Some(Cmd::Analyze { image, session, k, bg_sat, bg_fill, max_dim }) => {
+            let v = cmd_analyze(image, session.as_deref(), *k, *bg_sat, *bg_fill, *max_dim)?;
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(())
         }
@@ -394,6 +402,7 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
     let mut p = Params::default();
     p.wall_k = args.k;
     p.bg_sat = args.bg_sat;
+    p.bg_fill = args.bg_fill;
     p.analysis_max_dim = args.max_dim;
 
     println!(
@@ -457,7 +466,8 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
 
         let mask = render::keep_mask(&a, sel, &HashSet::new(), p.mask_dilate);
         let mask = render::feather(&a, &mask, p.feather);
-        let out_img = render::composite_full(&img.to_rgba8(), &a, &mask, p.bg_sat);
+        let fill = render::fill_layer(&a, &HashSet::new(), p.bg_fill);
+        let out_img = render::composite_full(&img.to_rgba8(), &a, &mask, p.bg_sat, fill.as_ref());
 
         match sel {
             Some(ci) => {

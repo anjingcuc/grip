@@ -77,6 +77,10 @@ pub struct Params {
     pub feather: f32,
     /// 背景保留的饱和度（0 = 完全灰度）
     pub bg_sat: f32,
+    /// 墙面净化强度（0 = 关闭；>0 时非岩点区域混向墙面场亮部参考色，先于灰度化）
+    /// serde(default)：兼容新增该字段前的老会话 state.json
+    #[serde(default)]
+    pub bg_fill: f32,
 }
 
 impl Default for Params {
@@ -93,6 +97,7 @@ impl Default for Params {
             mask_dilate: 2,
             feather: 2.5,
             bg_sat: 0.0,
+            bg_fill: 0.0,
         }
     }
 }
@@ -247,32 +252,110 @@ fn build_wall_field(lab: &[[f32; 3]], sat: &[f32], w: usize, h: usize) -> WallFi
         fb[t] = mb;
         fsig[t] = (1.4826 * median3(&mut cds)).clamp(2.5, 14.0);
     }
-    let smooth = |src: &[f32], tw: usize, th: usize| -> Vec<f32> {
-        let mut out = vec![0f32; src.len()];
-        for y in 0..th {
-            for x in 0..tw {
-                let mut acc = 0.0;
-                let mut cnt = 0.0;
-                for dy in -1i32..=1 {
-                    for dx in -1i32..=1 {
-                        let yy = (y as i32 + dy).clamp(0, th as i32 - 1) as usize;
-                        let xx = (x as i32 + dx).clamp(0, tw as i32 - 1) as usize;
-                        acc += src[yy * tw + xx];
-                        cnt += 1.0;
-                    }
-                }
-                out[y * tw + x] = acc / cnt;
-            }
-        }
-        out
-    };
     WallField {
         tw,
         th,
-        l: smooth(&fl, tw, th),
-        a: smooth(&fa, tw, th),
-        b: smooth(&fb, tw, th),
-        sigma: smooth(&fsig, tw, th),
+        l: smooth3x3(&fl, tw, th),
+        a: smooth3x3(&fa, tw, th),
+        b: smooth3x3(&fb, tw, th),
+        sigma: smooth3x3(&fsig, tw, th),
+    }
+}
+
+/// 3×3 均值平滑（边缘钳制复制）
+fn smooth3x3(src: &[f32], tw: usize, th: usize) -> Vec<f32> {
+    let mut out = vec![0f32; src.len()];
+    for y in 0..th {
+        for x in 0..tw {
+            let mut acc = 0.0;
+            let mut cnt = 0.0;
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let yy = (y as i32 + dy).clamp(0, th as i32 - 1) as usize;
+                    let xx = (x as i32 + dx).clamp(0, tw as i32 - 1) as usize;
+                    acc += src[yy * tw + xx];
+                    cnt += 1.0;
+                }
+            }
+            out[y * tw + x] = acc / cnt;
+        }
+    }
+    out
+}
+
+/// 墙面净化用的墙面场变体（render 填充层的数据源）：与 build_wall_field 同骨架
+/// （分块 + 平滑 + 双线性），但统计口径换成"亮部干净色"——块内排除 exclude>0 的像素
+/// （岩点并集外扩区），取低饱和墙面像素的 P90 明度与亮部（L ≥ P90）像素的中位数色；
+/// 样本不足的块回退全局统计。sigma 置 0（净化不用）。
+pub(crate) fn build_fill_field(raw: &[u8], sat: &[f32], exclude: &[u8], w: usize, h: usize) -> WallField {
+    let tw = w.div_ceil(TILE);
+    let th = h.div_ceil(TILE);
+    let nt = tw * th;
+
+    // 分块采样（与 build_wall_field 同口径：低饱和 + 棋盘步进）
+    let mut samples: Vec<Vec<usize>> = vec![Vec::new(); nt];
+    let mut i = 0usize;
+    for y in 0..h {
+        let ty = (y / TILE).min(th - 1);
+        for x in 0..w {
+            if exclude[i] == 0 && sat[i] < 0.20 && (x + y) % 2 == 0 {
+                let tx = (x / TILE).min(tw - 1);
+                samples[ty * tw + tx].push(i);
+            }
+            i += 1;
+        }
+    }
+
+    // 亮部统计：P90 明度 + 亮部像素的中位数 (a*, b*)
+    let bright_stats = |idx: &[usize]| -> Option<(f32, f32, f32)> {
+        if idx.len() < 40 {
+            return None;
+        }
+        let mut pts: Vec<[f32; 3]> = idx
+            .iter()
+            .map(|&i| hsv::rgb_to_lab(raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2]))
+            .collect();
+        pts.sort_by(|x, y| x[0].partial_cmp(&y[0]).unwrap());
+        let p90 = pts[((pts.len() * 9) / 10).min(pts.len() - 1)][0];
+        let mut ba: Vec<f32> = pts.iter().filter(|p| p[0] >= p90).map(|p| p[1]).collect();
+        let mut bb: Vec<f32> = pts.iter().filter(|p| p[0] >= p90).map(|p| p[2]).collect();
+        Some((p90, median3(&mut ba), median3(&mut bb)))
+    };
+
+    let all: Vec<usize> = samples.iter().flatten().copied().collect();
+    let global = bright_stats(&all).unwrap_or((50.0, 0.0, 0.0));
+
+    // 稀疏块回退：先 3×3 邻块联合采样（跟随局部光照），仍不足才用全局
+    let neigh_stats = |t: usize| -> Option<(f32, f32, f32)> {
+        let (tx, ty) = (t % tw, t / tw);
+        let mut idx = Vec::new();
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                let (nx, ny) = (tx as i32 + dx, ty as i32 + dy);
+                if nx >= 0 && ny >= 0 && (nx as usize) < tw && (ny as usize) < th {
+                    idx.extend_from_slice(&samples[ny as usize * tw + nx as usize]);
+                }
+            }
+        }
+        bright_stats(&idx)
+    };
+
+    let mut fl = vec![0f32; nt];
+    let mut fa = vec![0f32; nt];
+    let mut fb = vec![0f32; nt];
+    for t in 0..nt {
+        let (l, a, b) = bright_stats(&samples[t]).or_else(|| neigh_stats(t)).unwrap_or(global);
+        fl[t] = l;
+        fa[t] = a;
+        fb[t] = b;
+    }
+    WallField {
+        tw,
+        th,
+        l: smooth3x3(&fl, tw, th),
+        a: smooth3x3(&fa, tw, th),
+        b: smooth3x3(&fb, tw, th),
+        sigma: vec![0.0; nt],
     }
 }
 
