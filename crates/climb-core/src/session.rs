@@ -25,6 +25,9 @@ pub struct SessionState {
     /// 抹除：判定误检（污渍/螺丝孔，不是岩点）——始终被净化满强度抹平
     #[serde(default)]
     pub erased: Vec<usize>,
+    /// 攀岩者掩码（分析分辨率像素索引）；None = 未检测到人物（issue #11）
+    #[serde(default)]
+    pub person: Option<Vec<u32>>,
     pub holds: Vec<Hold>,
     pub clusters: Vec<Cluster>,
 }
@@ -86,6 +89,7 @@ pub fn load(dir: &Path) -> Result<(SessionState, Analysis)> {
         hue,
         sat,
         val,
+        person: st.person.clone(),
         wall_v: st.wall_v,
         wall_s: st.wall_s,
         timing_ms: st.timing_ms,

@@ -94,6 +94,18 @@ pub fn feather(a: &Analysis, mask: &[u8], radius: f32) -> Vec<u8> {
     super::morph::blur(mask, a.aw as usize, a.ah as usize, radius)
 }
 
+/// 把攀岩者掩码并入保色掩码（issue #11）：person_keep > 0 且检测到人物时，
+/// 人物像素随选中线路一起保色（人物与岩点的重叠区取并集）。在羽化前调用。
+pub fn keep_person(mask: &mut [u8], a: &Analysis, person_keep: f32) {
+    if person_keep > 0.0 {
+        if let Some(pp) = &a.person {
+            for &i in pp {
+                mask[i as usize] = 255;
+            }
+        }
+    }
+}
+
 // ---------------- 描边高亮（Outline）：选中线路岩点外缘描 accent 橙边，叠在合成最上层 ----------------
 
 /// accent 橙（与 GUI 设计系统 --accent #ff5a2c 一致）——与岩点颜色无关的强调手段，

@@ -54,7 +54,7 @@ fn synth() -> (Analysis, usize) {
         hue,
         sat,
         val,
-        wall_v: 0.6,
+        person: None,        wall_v: 0.6,
         wall_s: 0.0,
         timing_ms: 0.0,
     };

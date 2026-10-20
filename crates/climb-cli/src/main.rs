@@ -38,6 +38,9 @@ struct Args {
     /// [批处理] 描边高亮强度 0-1（选中线路岩点外缘描 accent 橙边，叠在最上层）
     #[arg(long, default_value_t = 0.0)]
     outline: f32,
+    /// [批处理] 攀岩者保色（1=人物彩色，0=随背景灰度化；默认 1）
+    #[arg(long, default_value_t = 1.0)]
+    person_keep: f32,
     #[arg(long, default_value_t = 1600)]
     max_dim: u32,
     #[arg(long)]
@@ -66,6 +69,9 @@ enum Cmd {
         /// 描边高亮强度 0-1（选中线路岩点外缘描 accent 橙边，叠在最上层）
         #[arg(long, default_value_t = 0.0)]
         outline: f32,
+        /// 攀岩者保色（1=人物彩色，0=随背景灰度化；默认 1）
+        #[arg(long, default_value_t = 1.0)]
+        person_keep: f32,
         #[arg(long, default_value_t = 1600)]
         max_dim: u32,
     },
@@ -126,6 +132,7 @@ fn summary_json(dir: &Path, st: &SessionState) -> Value {
         "selected": st.selected,
         "excluded": st.excluded,
         "erased": st.erased,
+        "person_px": st.person.as_ref().map(|p| p.len()),
         "clusters": st.clusters.iter().enumerate().map(|(ci, c)| json!({
             "id": ci,
             "name": names[ci],
@@ -162,7 +169,8 @@ fn render_session(st: &SessionState, a: &Analysis, out: &Path) -> Result<()> {
         .to_rgba8();
     let excluded: HashSet<usize> = st.excluded.iter().copied().collect();
     let erased: HashSet<usize> = st.erased.iter().copied().collect();
-    let mask = render::keep_mask(a, st.selected, &excluded, &erased, st.params.mask_dilate);
+    let mut mask = render::keep_mask(a, st.selected, &excluded, &erased, st.params.mask_dilate);
+    render::keep_person(&mut mask, a, st.params.person_keep);
     let mask = render::feather(a, &mask, st.params.feather);
     let fill = render::fill_layer(a, &erased, st.params.bg_fill);
     let mut img = render::composite_full(&full, a, &mask, st.params.bg_sat, fill.as_ref());
@@ -214,12 +222,13 @@ fn debug_image(st: &SessionState, a: &Analysis) -> RgbaImage {
 
 // ---------------- agent 子命令 ----------------
 
-fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, bg_fill: f32, outline: f32, max_dim: u32) -> Result<Value> {
+fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, bg_fill: f32, outline: f32, person_keep: f32, max_dim: u32) -> Result<Value> {
     let mut p = Params::default();
     p.wall_k = k;
     p.bg_sat = bg_sat;
     p.bg_fill = bg_fill;
     p.outline = outline;
+    p.person_keep = person_keep;
     p.analysis_max_dim = max_dim;
     let dyn_img = image::ImageReader::open(image)
         .with_context(|| format!("打开 {}", image.display()))?
@@ -242,6 +251,7 @@ fn cmd_analyze(image: &Path, session: Option<&Path>, k: f32, bg_sat: f32, bg_fil
         selected: None,
         excluded: Vec::new(),
         erased: Vec::new(),
+        person: a.person.clone(),
         holds: a.holds.clone(),
         clusters: a.clusters.clone(),
     };
@@ -401,8 +411,8 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match &args.cmd {
-        Some(Cmd::Analyze { image, session, k, bg_sat, bg_fill, outline, max_dim }) => {
-            let v = cmd_analyze(image, session.as_deref(), *k, *bg_sat, *bg_fill, *outline, *max_dim)?;
+        Some(Cmd::Analyze { image, session, k, bg_sat, bg_fill, outline, person_keep, max_dim }) => {
+            let v = cmd_analyze(image, session.as_deref(), *k, *bg_sat, *bg_fill, *outline, *person_keep, *max_dim)?;
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(())
         }
@@ -441,6 +451,7 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
     p.bg_sat = args.bg_sat;
     p.bg_fill = args.bg_fill;
     p.outline = args.outline;
+    p.person_keep = args.person_keep;
     p.analysis_max_dim = args.max_dim;
 
     println!(
@@ -502,7 +513,8 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
             );
         }
 
-        let mask = render::keep_mask(&a, sel, &HashSet::new(), &HashSet::new(), p.mask_dilate);
+        let mut mask = render::keep_mask(&a, sel, &HashSet::new(), &HashSet::new(), p.mask_dilate);
+        render::keep_person(&mut mask, &a, p.person_keep);
         let mask = render::feather(&a, &mask, p.feather);
         let fill = render::fill_layer(&a, &HashSet::new(), p.bg_fill);
         let mut out_img = render::composite_full(&img.to_rgba8(), &a, &mask, p.bg_sat, fill.as_ref());
@@ -558,6 +570,7 @@ fn batch_main(args: &Args, input: &Path) -> Result<()> {
                 selected: sel,
                 excluded: Vec::new(),
                 erased: Vec::new(),
+                person: a.person.clone(),
                 holds: a.holds.clone(),
                 clusters: a.clusters.clone(),
             };

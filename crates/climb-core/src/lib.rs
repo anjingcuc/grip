@@ -85,6 +85,14 @@ pub struct Params {
     /// serde(default)：兼容新增该字段前的老会话 state.json
     #[serde(default)]
     pub outline: f32,
+    /// 攀岩者保色（1 = 人物保持彩色，0 = 随背景灰度化；默认保色——issue #11）
+    /// serde(default) 缺省补 1：兼容新增该字段前的老会话 state.json
+    #[serde(default = "default_person_keep")]
+    pub person_keep: f32,
+}
+
+fn default_person_keep() -> f32 {
+    1.0
 }
 
 impl Default for Params {
@@ -103,6 +111,7 @@ impl Default for Params {
             bg_sat: 0.0,
             bg_fill: 0.0,
             outline: 0.0,
+            person_keep: 1.0,
         }
     }
 }
@@ -166,6 +175,9 @@ pub struct Analysis {
     pub hue: Vec<f32>,
     pub sat: Vec<f32>,
     pub val: Vec<f32>,
+    /// 攀岩者掩码（分析分辨率像素索引；YOLO11n person 框 + EdgeSAM 轮廓）。
+    /// None = 未检测到人物或人物模型未启用（issue #11）
+    pub person: Option<Vec<u32>>,
     pub wall_v: f32,
     pub wall_s: f32,
     pub timing_ms: f32,
@@ -512,6 +524,7 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
     let min_px = (p.min_area_frac * n as f64) as u32;
     let mut holds: Vec<Hold> = Vec::new();
     let mut labels: Vec<u32> = Vec::new();
+    let mut person: Option<Vec<u32>> = None;
 
     if let Some(det) = detector::YoloDetect::holds() {
         // 主路：ChalkGPT YOLO11s 出框 -> EdgeSAM 框提示掩码 ∩ 局部墙面差分（回退链见下）
@@ -749,6 +762,41 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
                 holds.push(hf);
             }
         }
+        // ---- 人物检测（可选）：COCO YOLO11n person 框 → 复用同一 EdgeSAM embedding 出轮廓（issue #11） ----
+        if let (Some(pdet), Some(s), Some(e)) = (detector::YoloDetect::persons(), sam, emb.as_ref()) {
+            let pboxes = pdet.detect_persons(&img);
+            if !pboxes.is_empty() {
+                cb("人物轮廓分割");
+                let mut pbin = vec![0u8; n];
+                for (_, pb) in pboxes.iter().take(3) {
+                    let win = sam_window(*pb, 0.10, aw, ah);
+                    if let Some((grid, _)) = s.mask_for_box(e, *pb) {
+                        for y in win.1..win.3 {
+                            for x in win.0..win.2 {
+                                if e.sample_logit(&grid, x as f32 + 0.5, y as f32 + 0.5) > 0.0 {
+                                    pbin[y * w + x] = 255;
+                                }
+                            }
+                        }
+                    }
+                }
+                let px: Vec<u32> = {
+                    // 人物掩码扣除岩点并集（外扩 1px 防 halo）：岩点归线路语义，
+                    // 人物只保留皮肤/衣物——防止掩码把身后/手边的岩点吞进人物区
+                    let mut hbin = vec![0u8; n];
+                    for h in &holds {
+                        for &i in &h.own_pixels {
+                            hbin[i as usize] = 255;
+                        }
+                    }
+                    let hbin = morph::dilate(&hbin, w, h, 1);
+                    (0..n).filter(|&i| pbin[i] > 0 && hbin[i] == 0).map(|i| i as u32).collect()
+                };
+                if px.len() >= 24 {
+                    person = Some(px);
+                }
+            }
+        }
     }
 
     if holds.is_empty() {
@@ -913,6 +961,7 @@ pub fn analyze_with_progress(full: &DynamicImage, p: &Params, cb: &dyn Fn(&str))
         hue,
         sat,
         val,
+        person,
         wall_v,
         wall_s,
         timing_ms: t0.elapsed().as_secs_f32() * 1000.0,

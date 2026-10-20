@@ -170,6 +170,46 @@ impl YoloDetect {
     }
 }
 
+// ---------------- 人物检测器（COCO YOLO11n，person = class 0） ----------------
+
+/// 人物检测置信度
+const PERSON_CONF: f32 = 0.30;
+
+static PERSONS: OnceLock<Result<YoloDetect, String>> = OnceLock::new();
+
+fn persons_candidates() -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = Vec::new();
+    if let Some(p) = super::find_model("yolo11n_person.onnx") {
+        v.push(p);
+    }
+    v
+}
+
+impl YoloDetect {
+    /// 人物检测全局单例（可选模型：缺失时人物保色功能静默关闭）
+    pub fn persons() -> Option<&'static YoloDetect> {
+        PERSONS
+            .get_or_init(|| YoloDetect::load_default(&persons_candidates()).map_err(|e| e.to_string()))
+            .as_ref()
+            .ok()
+    }
+
+    pub fn persons_status() -> &'static str {
+        match PERSONS.get_or_init(|| YoloDetect::load_default(&persons_candidates()).map_err(|e| e.to_string())) {
+            Ok(_) => "YOLO11n 人物模型已加载",
+            Err(_) => "人物模型未启用（可选）",
+        }
+    }
+
+    /// 检测人物框（COCO person 类），返回输入图坐标 px，已做 NMS
+    pub fn detect_persons(&self, img: &RgbaImage) -> Vec<(f32, [f32; 4])> {
+        self.detect(img, PERSON_CONF, Some(&[0]))
+            .into_iter()
+            .map(|(c, _, b)| (c, b))
+            .collect()
+    }
+}
+
 static _UNUSED: () = ();
 
 fn nms_multi(mut dets: Vec<(f32, usize, [f32; 4])>) -> Vec<(f32, usize, [f32; 4])> {

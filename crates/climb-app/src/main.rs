@@ -98,6 +98,8 @@ struct Summary {
     holds: Vec<SummaryHold>,
     clusters: Vec<SummaryCluster>,
     selected: Option<usize>,
+    /// 是否检测到攀岩者（人物掩码非空）
+    person: bool,
 }
 
 #[derive(Serialize)]
@@ -105,6 +107,7 @@ struct AppInfo {
     cwd: String,
     holds_status: String,
     sam_status: String,
+    person_status: String,
 }
 
 #[derive(Serialize)]
@@ -136,6 +139,7 @@ fn auto_save(e: &ImgEntry, pb: &Path, params: &Params) {
         selected: e.sel,
         excluded: e.excluded.iter().copied().collect(),
         erased: e.erased.iter().copied().collect(),
+        person: e.a.person.clone(),
         holds: e.a.holds.clone(),
         clusters: e.a.clusters.clone(),
     };
@@ -208,11 +212,13 @@ fn build_summary(path: &Path, e: &ImgEntry) -> Summary {
             })
             .collect(),
         selected: e.sel,
+        person: e.a.person.is_some(),
     }
 }
 
 fn render_preview_url(e: &ImgEntry, params: &Params) -> Result<String, String> {
-    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
+    let mut mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
+    render::keep_person(&mut mask, &e.a, params.person_keep);
     let mask = render::feather(&e.a, &mask, params.feather);
     let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
     let mut img = render::composite_preview(&e.a, &mask, params.bg_sat, fill.as_ref());
@@ -284,6 +290,7 @@ fn get_state() -> AppInfo {
         cwd: std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
         holds_status: pipeline::detector::YoloDetect::holds_status().into(),
         sam_status: pipeline::sam::EdgeSam::status().into(),
+        person_status: pipeline::detector::YoloDetect::persons_status().into(),
     }
 }
 
@@ -381,6 +388,7 @@ async fn analyze(app: AppHandle, state: State<'_, AppState>, path: String) -> Re
             selected: None,
             excluded: Vec::new(),
             erased: Vec::new(),
+            person: a.person.clone(),
             holds: a.holds.clone(),
             clusters: a.clusters.clone(),
         };
@@ -641,7 +649,8 @@ async fn export_current(app: AppHandle, state: State<'_, AppState>, path: String
     };
     let imgs = state.images.lock().map_err(|_| "lock")?;
     let e = imgs.get(&pb).ok_or("未分析")?;
-    let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
+    let mut mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
+    render::keep_person(&mut mask, &e.a, params.person_keep);
     let mask = render::feather(&e.a, &mask, params.feather);
     let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
     let mut img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat, fill.as_ref());
@@ -677,7 +686,8 @@ async fn batch_export(app: AppHandle, state: State<'_, AppState>, folder: String
                         .filter(|(_, c)| c.kind == HoldKind::Colored)
                         .max_by_key(|(_, c)| c.area)
                         .map(|(ci, _)| ci);
-                    let mask = render::keep_mask(&a, sel, &Default::default(), &Default::default(), params.mask_dilate);
+                    let mut mask = render::keep_mask(&a, sel, &Default::default(), &Default::default(), params.mask_dilate);
+                    render::keep_person(&mut mask, &a, params.person_keep);
                     let mask = render::feather(&a, &mask, params.feather);
                     let fill = render::fill_layer(&a, &Default::default(), params.bg_fill);
                     let mut img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat, fill.as_ref());
@@ -737,6 +747,9 @@ fn set_params(state: State<'_, AppState>, patch: serde_json::Value, path: Option
         }
         if let Some(v) = patch.get("outline").and_then(|v| v.as_f64()) {
             p.outline = v as f32;
+        }
+        if let Some(v) = patch.get("person_keep").and_then(|v| v.as_f64()) {
+            p.person_keep = v as f32;
         }
         p.clone()
     };

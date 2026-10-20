@@ -11,7 +11,7 @@ models/               ONNX 模型（不进 git，获取方式见 models/README.m
 docs/                 技术调研报告（选型依据）
 ```
 
-**场景设定**：输入照片**没有攀爬者**。无人物检测、无自动选线——线路由用户点击选择（GUI）或 `--hue` 指定（CLI）。
+**场景设定**：输入照片通常**没有攀爬者**；若有，人物检测是可选增强（`person_keep` 开关，默认保色，ADR 0003）。无自动选线——线路由用户点击选择（GUI）或 `--hue` 指定（CLI）。
 
 ## 命令
 
@@ -38,6 +38,7 @@ cargo test --release -p climb-core --test lasso_detect
 |---|---|
 | `chalkgpt_holds.onnx` | 岩点检测（ChalkGPT YOLO11s，2 类：0=岩点 1=大体积） |
 | `edge_sam_3x_encoder.onnx` + `edge_sam_3x_decoder.onnx` | EdgeSAM 框提示分割（encoder 输入 1024 letterbox 输出 [1,256,64,64]；decoder 仅收 embedding+points+labels，输出 256×256 logits） |
+| `yolo11n_person.onnx` | （可选）COCO YOLO11n 人物检测（person=第 0 类，conf 0.30）；缺失时攀岩者保色静默关闭 |
 
 模型查找用统一的 `climb_core::find_model(name)`：cwd 及 exe 所在目录的**所有上级**逐层找 `models/<name>`。缺 YOLO 回退整图墙面差分；缺 SAM 回退框内墙面差分/椭圆。**回退路径不得删除**。ONNX opset 必须 12——tract 0.21 对高 opset 支持不全。
 
@@ -73,13 +74,13 @@ session.rs   标注持久化：<图片目录>/sessions/<文件名>/state.json + 
 - 岩点像素双表示：`label > 0` 引用 `Analysis.labels`（仅无 YOLO 回退路径）；`label == 0` 用 `own_pixels`（主路）。`keep_mask` 两条路径都要处理。**会话保存前必须 `materialize_labels`**。
 - `Analysis.hue/sat/val`（分析分辨率 HSV）是渲染颜色约束的数据源，删字段会破坏防串色。
 - SAM 掩码必须与"非墙证据"求交后再连通域拆分——直接用原始 SAM 掩码会产生横跨多点的条带合并（已验证的失败模式）。
-- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（keep_mask 外扩环带 + 多岩点重叠区，`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）；SAM 取样窗口外扩 = 类别感知（岩点 0.18 / 大体积 0.35），触边扩框 +25% ≤3 次解码、掩码增长 <5% 停滞收敛（`lib.rs`，issue #7）。**墙面净化**：`bg_fill`（0=关闭）；填充取样 = 块内低饱和（sat<0.20，同 `build_wall_field` 口径）像素 P90 明度 + 亮部中位数色，稀疏块回退 3×3 邻块→全局；岩点并集外扩 `FILL_DILATE` 3px + 羽化 `FILL_FEATHER` 2px（`render.rs`）。**抹除≠排除（ADR 0002）**：被抹除（erased，误检=非岩点）的点不并入并集，且**始终满强度抹平**（`bg_fill=0` 也抹）；被排除（excluded，颜色误判）的点仍并入并集受保护，只灰度化不抹平。**描边高亮**：`outline`（0=关闭）；描边带 = 羽化后选中掩码阈值化 → dilate 2px − 原掩码 → 柔边 1px（`render.rs`），accent 橙 #ff5a2c 叠在合成最上层（净化/保色之后），全分辨率导出经 `outline_band_full` 双线性放大。
+- **颜色判定魔法数联动**：聚类容差 `color_tol_ab`（14，Lab 色度平面欧氏距离，平均链接）；渲染约束 = 像素与簇色度中心距离 ≤20（keep_mask 外扩环带 + 多岩点重叠区，`render.rs`，低饱和像素放行）；`colored` 门限 sat≥0.22 && v≥0.10（`conn.rs`）；检测置信度 `HOLD_CONF`（0.20）；SAM 起用框 22px（`lib.rs`）；SAM 取样窗口外扩 = 类别感知（岩点 0.18 / 大体积 0.35），触边扩框 +25% ≤3 次解码、掩码增长 <5% 停滞收敛（`lib.rs`，issue #7）。**墙面净化**：`bg_fill`（0=关闭）；填充取样 = 块内低饱和（sat<0.20，同 `build_wall_field` 口径）像素 P90 明度 + 亮部中位数色，稀疏块回退 3×3 邻块→全局；岩点并集外扩 `FILL_DILATE` 3px + 羽化 `FILL_FEATHER` 2px（`render.rs`）。**抹除≠排除（ADR 0002）**：被抹除（erased，误检=非岩点）的点不并入并集，且**始终满强度抹平**（`bg_fill=0` 也抹）；被排除（excluded，颜色误判）的点仍并入并集受保护，只灰度化不抹平。**描边高亮**：`outline`（0=关闭）；描边带 = 羽化后选中掩码阈值化 → dilate 2px − 原掩码 → 柔边 1px（`render.rs`），accent 橙 #ff5a2c 叠在合成最上层（净化/保色之后），全分辨率导出经 `outline_band_full` 双线性放大。**攀岩者保色**：`person_keep`（默认 1）；`Analysis.person` = YOLO11n person 框（conf 0.30，≤3 个）→ 同一 SAM embedding 框提示解码（取样窗口外扩 10%），掩码像素随会话持久化，`keep_person` 在羽化前并入保色掩码。
 - **颜色命名/展示色相用 Lab 色度角** `atan2(b*,a*)`（锚点：红26/橙58/黄82/绿150/青200/蓝280/紫315/品红355），不是 HSV 色相——暗光下 HSV 色相漂移会把橙读成红（`color_name_ab`）。CLI `--hue` 用同一角。簇色卡 = `display_rgb(ab)`（低色度提亮到色度 28，仅显示用途）。**同名颜色组用 `disambiguated_names` 追加 ①②③**。
 - tract 模型可跨线程共享（rayon par_iter 共用 decoder 已验证）。
 
 ### 已定型、不要回头改的决策
 
-- 无人物检测、无自动选线（用户明确移除）。CLI 无 `--hue` 时默认保留面积最大的彩色组——确定性规则，不是"自动选线"。
+- 无自动选线（用户明确移除）。CLI 无 `--hue` 时默认保留面积最大的彩色组——确定性规则，不是"自动选线"。人物检测为可选增强（ADR 0003），默认 `person_keep=1` 保色。
 - 掩码主路 = YOLO 框提示 SAM ∩ 墙面差分（调研报告 §4.3 "检测器自提示"范式的落地），不是端到端分割、不是纯颜色分割。
 - 渲染后的边界色争议（橙黄渐变点、暗粉点）属语义模糊，靠 GUI 手动改判，不用阈值强分。
 

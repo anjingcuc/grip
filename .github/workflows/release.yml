@@ -22,20 +22,23 @@ jobs:
         with:
           workspaces: "."
 
-      - name: 下载模型文件（EdgeSAM + ChalkGPT 源权重）
+      - name: 下载模型文件（EdgeSAM + ChalkGPT 源权重 + YOLO11n 人物）
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path models | Out-Null
           Invoke-WebRequest -Uri "https://huggingface.co/camenduru/EdgeSAM/resolve/main/edge_sam_3x_encoder.onnx" -OutFile "models/edge_sam_3x_encoder.onnx" -TimeoutSec 600
           Invoke-WebRequest -Uri "https://huggingface.co/camenduru/EdgeSAM/resolve/main/edge_sam_3x_decoder.onnx" -OutFile "models/edge_sam_3x_decoder.onnx" -TimeoutSec 600
           Invoke-WebRequest -Uri "https://cdn.jsdelivr.net/gh/GabiShahmayster/ChalkGPT@main/weights/holds/v1/weights/best.pt" -OutFile "models/chalkgpt_holds_best.pt" -TimeoutSec 600
+          Invoke-WebRequest -Uri "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt" -OutFile "models/yolo11n.pt" -TimeoutSec 600
 
-      - name: 导出岩点检测 ONNX（ultralytics, opset 12）
+      - name: 导出 ONNX（ultralytics, opset 12）
         shell: pwsh
         run: |
           python -m pip install ultralytics --quiet --disable-pip-version-check
           python -c "from ultralytics import YOLO; YOLO(r'models/chalkgpt_holds_best.pt').export(format='onnx', imgsz=640, opset=12, simplify=True)"
           Move-Item models/chalkgpt_holds_best.onnx models/chalkgpt_holds.onnx -Force
+          python -c "from ultralytics import YOLO; YOLO(r'models/yolo11n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True)"
+          Move-Item models/yolo11n.onnx models/yolo11n_person.onnx -Force
 
       - name: 构建 CLI
         run: cargo build --release --locked -p climb-cli
@@ -47,7 +50,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          $models = @("models/chalkgpt_holds.onnx", "models/edge_sam_3x_encoder.onnx", "models/edge_sam_3x_decoder.onnx", "models/README.md")
+          $models = @("models/chalkgpt_holds.onnx", "models/edge_sam_3x_encoder.onnx", "models/edge_sam_3x_decoder.onnx", "models/yolo11n_person.onnx", "models/README.md")
           Compress-Archive -Path (@("target/release/GRIP-cli.exe") + $models) -DestinationPath dist/GRIP-cli-windows-x86_64.zip -Force
           Compress-Archive -Path (@("target/release/GRIP-app.exe") + $models) -DestinationPath dist/GRIP-app-windows-x86_64.zip -Force
 

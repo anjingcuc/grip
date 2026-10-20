@@ -116,7 +116,7 @@ fn synth() -> (Analysis, Vec<(u32, u32)>, (u32, u32)) {
         hue,
         sat,
         val,
-        wall_v: 0.5,
+        person: None,        wall_v: 0.5,
         wall_s: 0.0,
         timing_ms: 0.0,
     };

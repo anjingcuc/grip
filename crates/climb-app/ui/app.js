@@ -235,7 +235,7 @@ function renderSidebars() {
   // 检测信息
   if (sum) {
     $("#info-body").textContent =
-      `${sum.fw}×${sum.fh}（分析 ${sum.aw}×${sum.ah}）\n岩点 ${sum.holds.length} · 颜色组 ${sum.clusters.length} · ${sum.timing_ms.toFixed(0)} ms\n墙面 V=${sum.wall_v.toFixed(2)} S=${sum.wall_s.toFixed(2)}`;
+      `${sum.fw}×${sum.fh}（分析 ${sum.aw}×${sum.ah}）\n岩点 ${sum.holds.length} · 颜色组 ${sum.clusters.length} · ${sum.timing_ms.toFixed(0)} ms\n墙面 V=${sum.wall_v.toFixed(2)} S=${sum.wall_s.toFixed(2)}\n攀岩者 ${sum.person ? "已检出" : "未检出"}`;
   } else {
     $("#info-body").textContent = "未分析";
   }
@@ -546,6 +546,8 @@ function syncParamUI(params) {
   $("#p-bgfill-v").textContent = params.bg_fill.toFixed(2);
   $("#p-outline").value = params.outline;
   $("#p-outline-v").textContent = params.outline.toFixed(2);
+  $("#p-person").value = params.person_keep;
+  $("#p-person-v").textContent = params.person_keep >= 0.5 ? "开" : "关";
 }
 function bindParam(id, key, fmt, apply, transform) {
   const el = $(id);
@@ -642,8 +644,9 @@ async function boot() {
   bindParam("#p-bgsat", "bg_sat", (v) => v.toFixed(2), "render");
   bindParam("#p-bgfill", "bg_fill", (v) => v.toFixed(2), "render");
   bindParam("#p-outline", "outline", (v) => v.toFixed(2), "render");
+  bindParam("#p-person", "person_keep", (v) => (v >= 0.5 ? "开" : "关"), "render");
   const info = await invoke("get_state");
-  $("#model-status").textContent = `${info.holds_status} · ${info.sam_status}`;
+  $("#model-status").textContent = `${info.holds_status} · ${info.sam_status} · ${info.person_status}`;
   await openFolder(info.cwd);
   window.addEventListener("resize", layout);
   msg("打开文件夹或拖入图片 · 点击岩点选线 · 3=圈选补测");
