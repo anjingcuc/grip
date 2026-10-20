@@ -215,7 +215,11 @@ fn render_preview_url(e: &ImgEntry, params: &Params) -> Result<String, String> {
     let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
     let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
-    let img = render::composite_preview(&e.a, &mask, params.bg_sat, fill.as_ref());
+    let mut img = render::composite_preview(&e.a, &mask, params.bg_sat, fill.as_ref());
+    if params.outline > 0.0 {
+        let band = render::outline_band(&e.a, &mask);
+        render::apply_outline(&mut img, &band, params.outline);
+    }
     let mut buf = std::io::Cursor::new(Vec::new());
     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 84);
     enc.encode_image(&image::DynamicImage::ImageRgba8(img)).map_err(|e| e.to_string())?;
@@ -640,7 +644,11 @@ async fn export_current(app: AppHandle, state: State<'_, AppState>, path: String
     let mask = render::keep_mask(&e.a, e.sel, &e.excluded, &e.erased, params.mask_dilate);
     let mask = render::feather(&e.a, &mask, params.feather);
     let fill = render::fill_layer(&e.a, &e.erased, params.bg_fill);
-    let img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat, fill.as_ref());
+    let mut img = render::composite_full(&e.full, &e.a, &mask, params.bg_sat, fill.as_ref());
+    if params.outline > 0.0 {
+        let band = render::outline_band_full(&e.a, &mask);
+        render::apply_outline(&mut img, &band, params.outline);
+    }
     img.save(&target).map_err(|e2| e2.to_string())?;
     Ok(Some(target))
 }
@@ -672,7 +680,11 @@ async fn batch_export(app: AppHandle, state: State<'_, AppState>, folder: String
                     let mask = render::keep_mask(&a, sel, &Default::default(), &Default::default(), params.mask_dilate);
                     let mask = render::feather(&a, &mask, params.feather);
                     let fill = render::fill_layer(&a, &Default::default(), params.bg_fill);
-                    let img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat, fill.as_ref());
+                    let mut img = render::composite_full(&dyn_img.to_rgba8(), &a, &mask, params.bg_sat, fill.as_ref());
+                    if params.outline > 0.0 {
+                        let band = render::outline_band_full(&a, &mask);
+                        render::apply_outline(&mut img, &band, params.outline);
+                    }
                     let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
                     if img.save(out.join(format!("{stem}_route.png"))).is_ok() {
                         done += 1;
@@ -722,6 +734,9 @@ fn set_params(state: State<'_, AppState>, patch: serde_json::Value, path: Option
         }
         if let Some(v) = patch.get("bg_fill").and_then(|v| v.as_f64()) {
             p.bg_fill = v as f32;
+        }
+        if let Some(v) = patch.get("outline").and_then(|v| v.as_f64()) {
+            p.outline = v as f32;
         }
         p.clone()
     };

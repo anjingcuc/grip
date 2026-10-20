@@ -81,6 +81,10 @@ pub struct Params {
     /// serde(default)：兼容新增该字段前的老会话 state.json
     #[serde(default)]
     pub bg_fill: f32,
+    /// 描边高亮强度（0 = 关闭；>0 时选中线路岩点外缘描 accent 橙边，叠在合成最上层）
+    /// serde(default)：兼容新增该字段前的老会话 state.json
+    #[serde(default)]
+    pub outline: f32,
 }
 
 impl Default for Params {
@@ -98,6 +102,7 @@ impl Default for Params {
             feather: 2.5,
             bg_sat: 0.0,
             bg_fill: 0.0,
+            outline: 0.0,
         }
     }
 }

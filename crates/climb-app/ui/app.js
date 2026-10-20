@@ -544,6 +544,8 @@ function syncParamUI(params) {
   $("#p-bgsat-v").textContent = params.bg_sat.toFixed(2);
   $("#p-bgfill").value = params.bg_fill;
   $("#p-bgfill-v").textContent = params.bg_fill.toFixed(2);
+  $("#p-outline").value = params.outline;
+  $("#p-outline-v").textContent = params.outline.toFixed(2);
 }
 function bindParam(id, key, fmt, apply, transform) {
   const el = $(id);
@@ -639,6 +641,7 @@ async function boot() {
   bindParam("#p-feather", "feather", (v) => v.toFixed(1), "render");
   bindParam("#p-bgsat", "bg_sat", (v) => v.toFixed(2), "render");
   bindParam("#p-bgfill", "bg_fill", (v) => v.toFixed(2), "render");
+  bindParam("#p-outline", "outline", (v) => v.toFixed(2), "render");
   const info = await invoke("get_state");
   $("#model-status").textContent = `${info.holds_status} · ${info.sam_status}`;
   await openFolder(info.cwd);

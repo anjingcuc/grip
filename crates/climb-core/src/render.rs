@@ -94,6 +94,52 @@ pub fn feather(a: &Analysis, mask: &[u8], radius: f32) -> Vec<u8> {
     super::morph::blur(mask, a.aw as usize, a.ah as usize, radius)
 }
 
+// ---------------- 描边高亮（Outline）：选中线路岩点外缘描 accent 橙边，叠在合成最上层 ----------------
+
+/// accent 橙（与 GUI 设计系统 --accent #ff5a2c 一致）——与岩点颜色无关的强调手段，
+/// 解决灰/黑岩点在灰度化墙面上"保色"后不可见的问题（issue #10）
+pub const OUTLINE_RGB: [u8; 3] = [255, 90, 44];
+
+/// 描边带宽/柔边（分析分辨率 px）
+const OUTLINE_WIDTH: usize = 2;
+const OUTLINE_FEATHER: f32 = 1.0;
+
+/// 从羽化后的选中掩码生成描边带 alpha（分析分辨率）：
+/// 掩码阈值化 → dilate − 原掩码 = 外向轮廓环带（画在墙面侧，灰底上最醒目）→ 柔边
+pub fn outline_band(a: &Analysis, mask: &[u8]) -> Vec<u8> {
+    let (w, h) = (a.aw as usize, a.ah as usize);
+    let bin: Vec<u8> = mask.iter().map(|&m| if m > 128 { 255 } else { 0 }).collect();
+    let dil = super::morph::dilate(&bin, w, h, OUTLINE_WIDTH);
+    let band: Vec<u8> = dil.iter().zip(bin.iter()).map(|(&d, &b)| d.saturating_sub(b)).collect();
+    feather(a, &band, OUTLINE_FEATHER)
+}
+
+/// 分析分辨率描边带双线性放大到全分辨率
+pub fn outline_band_full(a: &Analysis, mask: &[u8]) -> Vec<u8> {
+    let band = outline_band(a, mask);
+    let img = image::GrayImage::from_raw(a.aw, a.ah, band).expect("outline band size mismatch");
+    imageops::resize(&img, a.fw, a.fh, imageops::FilterType::Triangle).into_raw()
+}
+
+/// 描边染色后处理：band_alpha 必须与 img 同尺寸；strength 0..1
+pub fn apply_outline(img: &mut RgbaImage, band_alpha: &[u8], strength: f32) {
+    let k = strength.clamp(0.0, 1.0);
+    if k <= 0.0 {
+        return;
+    }
+    img.as_mut()
+        .par_chunks_exact_mut(4)
+        .zip_eq(band_alpha.par_chunks_exact(1))
+        .for_each(|(px, b)| {
+            let t = (b[0] as f32 / 255.0) * k;
+            if t > 0.0 {
+                px[0] = (px[0] as f32 + (OUTLINE_RGB[0] as f32 - px[0] as f32) * t) as u8;
+                px[1] = (px[1] as f32 + (OUTLINE_RGB[1] as f32 - px[1] as f32) * t) as u8;
+                px[2] = (px[2] as f32 + (OUTLINE_RGB[2] as f32 - px[2] as f32) * t) as u8;
+            }
+        });
+}
+
 // ---------------- 墙面净化（Wall Fill）：非岩点区域填墙面场亮部参考色，先于灰度化 ----------------
 
 /// 填充层（分析分辨率）：每像素墙面参考色 + 填充 alpha（已含强度）
