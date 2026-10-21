@@ -67,16 +67,6 @@
       <section class="side-sec">
         <div class="side-head"><span class="side-title">参数</span><span class="muted small">松手生效</span></div>
         <div class="param">
-          <label for="p-wallk">灵敏度 <output id="p-wallk-v"></output></label>
-          <input type="range" id="p-wallk" min="3" max="10" step="0.1">
-          <div class="param-hint">越小检出越多（墙面差分阈值倍数）</div>
-        </div>
-        <div class="param">
-          <label for="p-minarea">最小岩点 <output id="p-minarea-v"></output></label>
-          <input type="range" id="p-minarea" min="-4.6" max="-2.2" step="0.05">
-          <div class="param-hint">占画面比例，对数刻度</div>
-        </div>
-        <div class="param">
           <label for="p-feather">边缘羽化 <output id="p-feather-v"></output></label>
           <input type="range" id="p-feather" min="0" max="8" step="0.5">
         </div>
@@ -94,11 +84,24 @@
           <input type="range" id="p-outline" min="0" max="1" step="0.05">
           <div class="param-hint">选中线路描橙色边；灰点在灰墙上也可辨；0 = 关闭</div>
         </div>
-        <div class="param">
-          <label for="p-person">攀岩者保色 <output id="p-person-v"></output></label>
-          <input type="range" id="p-person" min="0" max="1" step="1">
-          <div class="param-hint">检测到人物时：开 = 攀岩者彩色，关 = 随背景灰度</div>
+        <div class="param param-toggle">
+          <label for="p-person">攀岩者保色</label>
+          <label class="switch"><input type="checkbox" id="p-person"><span class="track"></span></label>
         </div>
+        <div class="param-hint">检测到人物时：开 = 攀岩者彩色，关 = 随背景灰度</div>
+        <details id="adv-params">
+          <summary>高级参数<span class="muted small">（默认已调好，需重分析）</span></summary>
+          <div class="param">
+            <label for="p-wallk">灵敏度 <output id="p-wallk-v"></output></label>
+            <input type="range" id="p-wallk" min="3" max="10" step="0.1">
+            <div class="param-hint">越小检出越多（墙面差分阈值倍数）</div>
+          </div>
+          <div class="param">
+            <label for="p-minarea">最小岩点 <output id="p-minarea-v"></output></label>
+            <input type="range" id="p-minarea" min="-4.6" max="-2.2" step="0.05">
+            <div class="param-hint">占画面比例，对数刻度</div>
+          </div>
+        </details>
       </section>
 
       <section class="side-sec" id="info-sec">

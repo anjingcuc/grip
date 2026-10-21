@@ -546,8 +546,16 @@ function syncParamUI(params) {
   $("#p-bgfill-v").textContent = params.bg_fill.toFixed(2);
   $("#p-outline").value = params.outline;
   $("#p-outline-v").textContent = params.outline.toFixed(2);
-  $("#p-person").value = params.person_keep;
-  $("#p-person-v").textContent = params.person_keep >= 0.5 ? "开" : "关";
+  $("#p-person").checked = params.person_keep >= 0.5;
+}
+// 参数变更后的预览刷新（render 类参数走 refresh_preview；reanalyze 类由调用方另处理）
+async function refreshAfterParam() {
+  if (S.cur && S.summaries.has(S.cur)) {
+    const dataUrl = await invoke("refresh_preview", { path: S.cur });
+    const pv = S.previews.get(S.cur);
+    if (pv) pv.result = dataUrl;
+    if (S.view === "result") showResult(dataUrl);
+  }
 }
 function bindParam(id, key, fmt, apply, transform) {
   const el = $(id);
@@ -556,15 +564,19 @@ function bindParam(id, key, fmt, apply, transform) {
     $(id + "-v").textContent = fmt(raw);
     const v = transform ? transform(raw) : raw;
     await invoke("set_params", { patch: { [key]: v }, path: S.cur });
-    if (S.cur && S.summaries.has(S.cur)) {
-      if (apply === "reanalyze") analyzeImage(S.cur, true);
-      else {
-        const dataUrl = await invoke("refresh_preview", { path: S.cur });
-        const pv = S.previews.get(S.cur);
-        if (pv) pv.result = dataUrl;
-        if (S.view === "result") showResult(dataUrl);
-      }
+    if (apply === "reanalyze") {
+      if (S.cur && S.summaries.has(S.cur)) analyzeImage(S.cur, true);
+    } else {
+      await refreshAfterParam();
     }
+  });
+}
+// 开关（switch）绑定：二值参数（如攀岩者保色），即时刷新预览
+function bindToggle(id, key) {
+  const el = $(id);
+  el.addEventListener("change", async () => {
+    await invoke("set_params", { patch: { [key]: el.checked ? 1 : 0 }, path: S.cur });
+    await refreshAfterParam();
   });
 }
 
@@ -644,7 +656,11 @@ async function boot() {
   bindParam("#p-bgsat", "bg_sat", (v) => v.toFixed(2), "render");
   bindParam("#p-bgfill", "bg_fill", (v) => v.toFixed(2), "render");
   bindParam("#p-outline", "outline", (v) => v.toFixed(2), "render");
-  bindParam("#p-person", "person_keep", (v) => (v >= 0.5 ? "开" : "关"), "render");
+  bindToggle("#p-person", "person_keep");
+  // 高级参数折叠状态记忆
+  const adv = $("#adv-params");
+  adv.open = localStorage.getItem("adv-params-open") === "1";
+  adv.addEventListener("toggle", () => localStorage.setItem("adv-params-open", adv.open ? "1" : "0"));
   const info = await invoke("get_state");
   $("#model-status").textContent = `${info.holds_status} · ${info.sam_status} · ${info.person_status}`;
   await openFolder(info.cwd);
